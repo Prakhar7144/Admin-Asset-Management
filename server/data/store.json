@@ -1,0 +1,23 @@
+{
+  "employees": [],
+  "inventory": [
+    {
+      "id": "02a286d4-f7e4-4a19-a26f-73aaf0c65012",
+      "itemType": "Headphone",
+      "serialNumber": "BCH3",
+      "employeeCode": "EMP101",
+      "employeeName": "Prakhar",
+      "status": "Unallocated",
+      "allocatedTo": null
+    },
+    {
+      "id": "7e7fae35-6643-45fb-bcec-4d0cd8f94d3c",
+      "itemType": "Laptop",
+      "serialNumber": "HCB12",
+      "employeeCode": "EMP102",
+      "employeeName": "Mohan",
+      "status": "Unallocated",
+      "allocatedTo": null
+    }
+  ]
+}
