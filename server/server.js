@@ -52,10 +52,10 @@ function normalizeAsset(asset, employee = null, fallback = {}) {
 
   if (currentEmployee) {
     if (!lastEntry || lastEntry.employeeId !== currentEmployee.id || lastEntry.returnedAt) {
-      if (lastEntry && !lastEntry.returnedAt && lastEntry.employeeId !== currentEmployee.id) {
+      if (lastEntry && !lastEntry.returnedAt) {
         history[history.length - 1] = {
           ...lastEntry,
-          returnedAt: employee?.dateOfLeaving || now,
+          returnedAt: now,
           status: 'Returned',
         };
       }
@@ -64,7 +64,7 @@ function normalizeAsset(asset, employee = null, fallback = {}) {
   } else if (lastEntry && !lastEntry.returnedAt) {
     history[history.length - 1] = {
       ...lastEntry,
-      returnedAt: employee?.dateOfLeaving || now,
+      returnedAt: now,
       status: 'Returned',
     };
   }
@@ -76,10 +76,10 @@ function normalizeAsset(asset, employee = null, fallback = {}) {
     serialNumber: base.serialNumber || fallback.serialNumber || '',
     category: base.category || fallback.category || 'IT Asset',
     status: currentEmployee ? 'Assigned' : 'Unallocated',
-    employeeId: currentEmployee?.id || null,
-    employeeCode: currentEmployee?.empCode || null,
-    employeeName: currentEmployee?.empName || null,
-    allocatedTo: currentEmployee?.id || null,
+    employeeId: currentEmployee?.id || base.employeeId || fallback.employeeId || null,
+    employeeCode: currentEmployee?.empCode || base.employeeCode || fallback.employeeCode || null,
+    employeeName: currentEmployee?.empName || base.employeeName || fallback.employeeName || null,
+    allocatedTo: currentEmployee?.id || base.allocatedTo || fallback.allocatedTo || null,
     history,
   };
 }
@@ -90,6 +90,8 @@ function syncInventory(data) {
 
   const employees = Array.isArray(data.employees) ? data.employees : [];
   const inventory = Array.isArray(data.inventory) ? data.inventory : [];
+  const persistedAccessCards = Array.isArray(data.accessCards) ? data.accessCards : [];
+  const persistedItAssets = Array.isArray(data.itAssets) ? data.itAssets : [];
 
   const normalizedEmployees = employees.map((employee) => {
     const leavingDate = parseDateInput(employee.dateOfLeaving);
@@ -109,60 +111,138 @@ function syncInventory(data) {
     };
   });
 
+  const inventorySource = [...persistedItAssets, ...inventory];
   const inventoryByKey = new Map();
-  inventory.forEach((item) => {
-    const key = item.id || `serial:${item.serialNumber}`;
+  // Index existing inventory preferring a canonical serial (trimmed + lowercased)
+  inventorySource.forEach((item) => {
+    const canonicalSerial = item && item.serialNumber ? String(item.serialNumber).trim().toLowerCase() : null;
+    const key = canonicalSerial ? `serial:${canonicalSerial}` : item.id || null;
     if (key) inventoryByKey.set(key, item);
   });
 
-  const seen = new Set();
-  const mergedInventory = [];
-
+  // Normalize all items (from employees and persisted inventory) then merge
+  // them into a single map keyed by canonical serial (trim + lowercase).
+  const allNormalized = [];
   normalizedEmployees.forEach((employee) => {
     employee.assets.forEach((asset) => {
-      const key = asset.id || `serial:${asset.serialNumber}`;
-      const existing = inventoryByKey.get(key) || inventoryByKey.get(`serial:${asset.serialNumber}`) || {};
-      const normalized = normalizeAsset(asset, employee, existing);
-      mergedInventory.push(normalized);
-      seen.add(key);
+      allNormalized.push(normalizeAsset(asset, employee, {}));
     });
   });
-
-  inventory.forEach((item) => {
-    const key = item.id || `serial:${item.serialNumber}`;
-    if (seen.has(key)) return;
-    const normalized = normalizeAsset(item, null, item);
-    mergedInventory.push(normalized);
-    seen.add(key);
+  inventorySource.forEach((item) => {
+    allNormalized.push(normalizeAsset(item, null, {}));
   });
 
-  const uniqueInventory = [];
-  const inventoryIds = new Set();
-  mergedInventory.forEach((item) => {
-    const key = item.id || `serial:${item.serialNumber}`;
-    if (inventoryIds.has(key)) return;
-    inventoryIds.add(key);
-    uniqueInventory.push(item);
+  const mergedBySerial = new Map();
+  allNormalized.forEach((item) => {
+    const canonicalSerial = item && item.serialNumber ? String(item.serialNumber).trim().toLowerCase() : null;
+    const key = canonicalSerial ? `serial:${canonicalSerial}` : item.id || null;
+    if (!key) return;
+
+    if (!mergedBySerial.has(key)) {
+      mergedBySerial.set(key, { ...item, history: Array.isArray(item.history) ? [...item.history] : [] });
+      return;
+    }
+
+    const existing = mergedBySerial.get(key);
+    // Merge histories: combine and collapse entries that belong to the same
+    // employee into a single record. For each employee keep the earliest
+    // assignedAt and latest returnedAt, and mark status accordingly.
+    const combined = [...(existing.history || []), ...(item.history || [])];
+    const grouped = new Map();
+    combined.forEach((h) => {
+      const empKey = h.employeeId || `${h.employeeCode || ''}:${h.employeeName || ''}`;
+      if (!grouped.has(empKey)) {
+        // track presence of any open (not returned) entry
+        grouped.set(empKey, { ...h, _hasOpen: !h.returnedAt });
+        return;
+      }
+      const cur = grouped.get(empKey);
+      // assignedAt: pick earliest non-null
+      if (h.assignedAt && (!cur.assignedAt || new Date(h.assignedAt) < new Date(cur.assignedAt))) {
+        cur.assignedAt = h.assignedAt;
+      }
+      // returnedAt: pick latest non-null
+      if (h.returnedAt && (!cur.returnedAt || new Date(h.returnedAt) > new Date(cur.returnedAt))) {
+        cur.returnedAt = h.returnedAt;
+      }
+      // if any fragment has no returnedAt, keep it open
+      if (!h.returnedAt) cur._hasOpen = true;
+      grouped.set(empKey, cur);
+    });
+    // preserve chronological order by assignedAt
+    const uniqueHistory = Array.from(grouped.values()).map((h) => {
+      const copy = { ...h };
+      // if any fragment was open, ensure returnedAt is cleared and status shows Assigned
+      if (copy._hasOpen) {
+        copy.returnedAt = null;
+        copy.status = 'Assigned';
+      } else {
+        copy.status = copy.returnedAt ? 'Returned' : 'Assigned';
+      }
+      delete copy._hasOpen;
+      return copy;
+    }).sort((a, b) => (a.assignedAt || '').localeCompare(b.assignedAt || ''));
+    existing.history = uniqueHistory;
+
+    // If one of the records is currently assigned, prefer that as the current state
+    if (item.status === 'Assigned') {
+      existing.status = 'Assigned';
+      existing.employeeId = item.employeeId || existing.employeeId;
+      existing.employeeCode = item.employeeCode || existing.employeeCode;
+      existing.employeeName = item.employeeName || existing.employeeName;
+      existing.allocatedTo = item.allocatedTo || existing.allocatedTo;
+    }
+
+    mergedBySerial.set(key, existing);
   });
 
-  const accessCards = normalizedEmployees
+  const dedupedInventory = Array.from(mergedBySerial.values()).filter((item) => item && item.serialNumber);
+
+  const accessCardIndex = new Map();
+  const registerCard = (card) => {
+    const key = card.id || card.cardNumber;
+    if (!key) return null;
+    const existing = accessCardIndex.get(key) || persistedAccessCards.find((entry) => entry.id === card.id || entry.cardNumber === card.cardNumber) || {};
+    const normalized = {
+      ...existing,
+      ...card,
+      id: card.id || existing.id || `access-${crypto.randomUUID()}`,
+      cardNumber: card.cardNumber || existing.cardNumber || '',
+      employeeId: card.employeeId || existing.employeeId || null,
+      employeeCode: card.employeeCode || existing.employeeCode || null,
+      employeeName: card.employeeName || existing.employeeName || null,
+      status: card.status || existing.status || 'Assigned',
+      assignedAt: card.assignedAt || existing.assignedAt || null,
+      returnedAt: card.returnedAt || existing.returnedAt || null,
+    };
+    accessCardIndex.set(key, normalized);
+    return normalized;
+  };
+
+  normalizedEmployees
     .filter((employee) => Boolean(employee.accessCard))
-    .map((employee) => ({
-      id: `access-${employee.id}`,
-      cardNumber: employee.accessCard,
-      employeeId: employee.id,
-      employeeCode: employee.empCode,
-      employeeName: employee.empName,
-      status: employee.status === 'Released' || employee.status === 'Archived' ? 'Returned' : 'Assigned',
-      assignedAt: employee.createdAt || null,
-      returnedAt: employee.dateOfLeaving || null,
-    }));
+    .forEach((employee) => {
+      registerCard({
+        id: `access-${employee.id}`,
+        cardNumber: employee.accessCard,
+        employeeId: employee.id,
+        employeeCode: employee.empCode,
+        employeeName: employee.empName,
+        status: employee.status === 'Released' || employee.status === 'Archived' ? 'Returned' : 'Assigned',
+        assignedAt: employee.createdAt || null,
+        returnedAt: employee.dateOfLeaving || null,
+      });
+    });
+
+  persistedAccessCards.forEach((card) => registerCard(card));
+
+  const accessCards = Array.from(accessCardIndex.values());
 
   return {
     employees: normalizedEmployees,
-    inventory: uniqueInventory,
+    inventory: dedupedInventory,
     accessCards,
-    itAssets: uniqueInventory.filter((item) => item.category !== 'Access Card'),
+    itAssets: dedupedInventory.filter((item) => item.category !== 'Access Card'),
   };
 }
 
@@ -251,6 +331,52 @@ app.delete('/api/employees/:id', (req, res) => {
   const synced = syncInventory({ ...data, employees });
   writeData(synced);
   res.json({ success: true, archived: true });
+});
+
+app.post('/api/inventory/access-cards', (req, res) => {
+  const data = readData();
+  const card = {
+    id: `access-${crypto.randomUUID()}`,
+    cardNumber: req.body.cardNumber,
+    employeeId: req.body.employeeId || null,
+    employeeCode: req.body.employeeCode || null,
+    employeeName: req.body.employeeName || null,
+    status: req.body.status || 'Assigned',
+    assignedAt: req.body.assignedAt || null,
+    returnedAt: req.body.returnedAt || null,
+  };
+
+  const nextData = {
+    ...data,
+    accessCards: [...(data.accessCards || []), card],
+  };
+  const synced = syncInventory(nextData);
+  writeData(synced);
+  res.status(201).json(card);
+});
+
+app.post('/api/inventory/it-assets', (req, res) => {
+  const data = readData();
+  const item = {
+    id: req.body.id || crypto.randomUUID(),
+    itemType: req.body.itemType,
+    serialNumber: req.body.serialNumber,
+    category: 'IT Asset',
+    status: req.body.status || 'Unallocated',
+    employeeId: req.body.employeeId || null,
+    employeeCode: req.body.employeeCode || null,
+    employeeName: req.body.employeeName || null,
+    allocatedTo: req.body.employeeId || null,
+    history: Array.isArray(req.body.history) ? req.body.history : [],
+  };
+
+  const nextData = {
+    ...data,
+    inventory: [...(data.inventory || []), item],
+  };
+  const synced = syncInventory(nextData);
+  writeData(synced);
+  res.status(201).json(item);
 });
 
 app.listen(port, () => {

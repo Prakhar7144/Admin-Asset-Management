@@ -1,8 +1,14 @@
 import { useState } from 'react';
 
+const initialCardForm = { cardNumber: '', employeeName: '', employeeCode: '', status: 'Assigned', returnedAt: '' };
+const initialAssetForm = { itemType: 'Laptop', serialNumber: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
+
 function InventoryPage({ inventory, onRefresh }) {
   const [activeTab, setActiveTab] = useState('itAssets');
   const [selectedItem, setSelectedItem] = useState(null);
+  const [cardForm, setCardForm] = useState(initialCardForm);
+  const [assetForm, setAssetForm] = useState(initialAssetForm);
+  const [message, setMessage] = useState('');
 
   const accessCards = inventory.accessCards || [];
   const itAssets = inventory.itAssets || [];
@@ -19,6 +25,40 @@ function InventoryPage({ inventory, onRefresh }) {
   };
 
   const currentLabel = activeTab === 'accessCards' ? 'Access cards' : 'IT assets';
+
+  const handleCardSubmit = async (event) => {
+    event.preventDefault();
+    try {
+      const response = await fetch('http://localhost:5000/api/inventory/access-cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cardForm),
+      });
+      if (!response.ok) throw new Error('failed');
+      setCardForm(initialCardForm);
+      setMessage('Access card added.');
+      onRefresh();
+    } catch (error) {
+      setMessage('Unable to add access card.');
+    }
+  };
+
+  const handleAssetSubmit = async (event) => {
+    event.preventDefault();
+    try {
+      const response = await fetch('http://localhost:5000/api/inventory/it-assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(assetForm),
+      });
+      if (!response.ok) throw new Error('failed');
+      setAssetForm(initialAssetForm);
+      setMessage('IT asset added.');
+      onRefresh();
+    } catch (error) {
+      setMessage('Unable to add IT asset.');
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -39,11 +79,35 @@ function InventoryPage({ inventory, onRefresh }) {
         </button>
       </div>
 
+      {message ? <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">{message}</div> : null}
+
       <div className="rounded-3xl border border-slate-800 bg-slate-900 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-slate-100">{currentLabel}</h3>
           <span className="text-sm text-slate-400">{activeTab === 'accessCards' ? `${accessCards.length} cards` : `${itAssets.length} assets`}</span>
         </div>
+
+        {activeTab === 'accessCards' ? (
+          <form onSubmit={handleCardSubmit} className="mb-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-4">
+            <input value={cardForm.cardNumber} onChange={(event) => setCardForm({ ...cardForm, cardNumber: event.target.value })} placeholder="Card number" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" required />
+            <input value={cardForm.employeeName} onChange={(event) => setCardForm({ ...cardForm, employeeName: event.target.value })} placeholder="Employee name" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <input value={cardForm.employeeCode} onChange={(event) => setCardForm({ ...cardForm, employeeCode: event.target.value })} placeholder="Employee code" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <button type="submit" className="rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950">Add card</button>
+          </form>
+        ) : (
+          <form onSubmit={handleAssetSubmit} className="mb-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-4">
+            <select value={assetForm.itemType} onChange={(event) => setAssetForm({ ...assetForm, itemType: event.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm">
+              <option>Laptop</option>
+              <option>Monitor</option>
+              <option>Mobile</option>
+              <option>Headphone</option>
+            </select>
+            <input value={assetForm.serialNumber} onChange={(event) => setAssetForm({ ...assetForm, serialNumber: event.target.value })} placeholder="Serial number" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" required />
+            <input value={assetForm.employeeName} onChange={(event) => setAssetForm({ ...assetForm, employeeName: event.target.value })} placeholder="Current holder" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <button type="submit" className="rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950">Add asset</button>
+          </form>
+        )}
+
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-slate-800 bg-slate-950/70 text-slate-400">
@@ -93,8 +157,8 @@ function InventoryPage({ inventory, onRefresh }) {
       </div>
 
       {selectedItem ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-          <div className="w-full max-w-2xl rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+        <div onClick={() => setSelectedItem(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-slate-100">{selectedItem.cardNumber || selectedItem.itemType}</h3>
@@ -105,23 +169,32 @@ function InventoryPage({ inventory, onRefresh }) {
 
             <div className="mt-6 space-y-3">
               {renderTimeline(selectedItem).length ? (
-                renderTimeline(selectedItem).map((entry, index) => (
-                  <div key={`${entry.employeeId || 'entry'}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="font-semibold text-slate-100">{entry.employeeName || 'Unassigned'}</div>
-                        <div className="text-sm text-slate-400">{entry.employeeCode || '—'}</div>
+                <div className="space-y-3">
+                  {renderTimeline(selectedItem).map((entry, index) => (
+                    <div key={`${entry.employeeId || 'entry'}-${index}`} className="flex flex-col gap-2 md:flex-row md:items-center">
+                      <div className="flex min-w-[3rem] flex-col items-center md:items-start">
+                        <div className={`h-3 w-3 rounded-full ${entry.returnedAt ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                        {index < renderTimeline(selectedItem).length - 1 ? <div className="mt-2 hidden h-8 w-px bg-slate-700 md:block" /> : null}
                       </div>
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${entry.returnedAt ? 'border border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>
-                        {entry.returnedAt ? 'Returned' : 'Current'}
-                      </span>
+                      <div className="flex-1 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="font-semibold text-slate-100">{entry.employeeName || 'Unassigned'}</div>
+                            <div className="text-sm text-slate-400">{entry.employeeCode || '—'}</div>
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${entry.returnedAt ? 'border border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>
+                            {entry.returnedAt ? 'Returned' : 'Assigned'}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2 text-sm text-slate-400 md:grid-cols-2">
+                          <div>From: {entry.assignedAt ? new Date(entry.assignedAt).toLocaleDateString() : '—'}</div>
+                          <div>To: {entry.returnedAt ? new Date(entry.returnedAt).toLocaleDateString() : 'Still in use'}</div>
+                        </div>
+                      </div>
+                      {index < renderTimeline(selectedItem).length - 1 ? <div className="hidden text-slate-500 md:block">→</div> : null}
                     </div>
-                    <div className="mt-3 grid gap-2 text-sm text-slate-400 md:grid-cols-2">
-                      <div>Assigned: {entry.assignedAt ? new Date(entry.assignedAt).toLocaleDateString() : '—'}</div>
-                      <div>Returned: {entry.returnedAt ? new Date(entry.returnedAt).toLocaleDateString() : 'Still in use'}</div>
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               ) : (
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400">No journey data is available yet.</div>
               )}
