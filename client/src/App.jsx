@@ -7,7 +7,7 @@ import InventoryPage from './pages/InventoryPage';
 
 function App() {
   const [employees, setEmployees] = useState([]);
-  const [inventory, setInventory] = useState([]);
+  const [inventory, setInventory] = useState({ accessCards: [], itAssets: [] });
   const [message, setMessage] = useState('');
 
   const fetchData = async () => {
@@ -19,7 +19,10 @@ function App() {
       const employeesData = await employeesRes.json();
       const inventoryData = await inventoryRes.json();
       setEmployees(employeesData);
-      setInventory(inventoryData);
+      setInventory({
+        accessCards: Array.isArray(inventoryData?.accessCards) ? inventoryData.accessCards : [],
+        itAssets: Array.isArray(inventoryData?.itAssets) ? inventoryData.itAssets : Array.isArray(inventoryData) ? inventoryData : [],
+      });
     } catch (error) {
       setMessage('Unable to connect to the server. Start the backend with npm start inside the server folder.');
     }
@@ -39,7 +42,7 @@ function App() {
               <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">Track staff, assigned devices, and returned inventory</h1>
             </div>
             <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
-              Leaving dates automatically release assets into the unallocated inventory pool.
+              Past employees stay visible, and each asset keeps a recorded ownership history.
             </div>
           </div>
 

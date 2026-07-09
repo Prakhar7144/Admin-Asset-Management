@@ -1,15 +1,16 @@
 import { Link } from 'react-router-dom';
 
 function DashboardPage({ employees, inventory, onRefresh }) {
-  const activeCount = employees.filter((employee) => employee.status !== 'Released').length;
-  const releasedCount = inventory.length;
+  const activeCount = employees.filter((employee) => employee.status !== 'Released' && employee.status !== 'Archived').length;
+  const historyCount = inventory.itAssets.reduce((sum, asset) => sum + (asset.history?.length || 0), 0);
+  const returnedCount = inventory.itAssets.filter((asset) => asset.status === 'Unallocated').length;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold">Dashboard</h2>
-          <p className="mt-1 text-sm text-slate-400">Overview of active employees and the shared inventory pool.</p>
+          <p className="mt-1 text-sm text-slate-400">Overview of active employees, former staff, and the shared inventory pool.</p>
         </div>
         <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
       </div>
@@ -21,14 +22,11 @@ function DashboardPage({ employees, inventory, onRefresh }) {
         </div>
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
           <div className="text-sm text-slate-400">Returned assets</div>
-          <div className="mt-3 text-4xl font-semibold text-emerald-300">{releasedCount}</div>
+          <div className="mt-3 text-4xl font-semibold text-emerald-300">{returnedCount}</div>
         </div>
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
-          <div className="text-sm text-slate-400">Quick actions</div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <Link to="/employees/new" className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950">Add employee</Link>
-            <Link to="/inventory" className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200">View inventory</Link>
-          </div>
+          <div className="text-sm text-slate-400">Asset history entries</div>
+          <div className="mt-3 text-4xl font-semibold text-violet-300">{historyCount}</div>
         </div>
       </div>
 
@@ -44,7 +42,7 @@ function DashboardPage({ employees, inventory, onRefresh }) {
                 <div className="font-medium text-slate-100">{employee.empName}</div>
                 <div className="text-sm text-slate-400">{employee.empCode} • {employee.accessCard}</div>
               </div>
-              <div className="text-sm text-slate-400">Leaving: {employee.dateOfLeaving || '—'}</div>
+              <div className="text-sm text-slate-400">Status: {employee.status || 'Active'}</div>
             </Link>
           ))}
         </div>

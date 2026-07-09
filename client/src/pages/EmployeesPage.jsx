@@ -1,12 +1,18 @@
 import { Link } from 'react-router-dom';
 
 function EmployeesPage({ employees, onRefresh }) {
+  const statusClasses = {
+    Active: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+    Released: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+    Archived: 'border-slate-600 bg-slate-800 text-slate-300',
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold">Employees</h2>
-          <p className="mt-1 text-sm text-slate-400">Browse all employees and edit their details or assigned assets.</p>
+          <p className="mt-1 text-sm text-slate-400">Browse active and former employees, including archived records that remain visible.</p>
         </div>
         <div className="flex gap-3">
           <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
@@ -19,6 +25,7 @@ function EmployeesPage({ employees, onRefresh }) {
           <thead className="border-b border-slate-800 bg-slate-950/70 text-slate-400">
             <tr>
               <th className="px-4 py-3">Employee</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Access card</th>
               <th className="px-4 py-3">Leaving date</th>
               <th className="px-4 py-3">Assets</th>
@@ -31,6 +38,11 @@ function EmployeesPage({ employees, onRefresh }) {
                 <td className="px-4 py-3">
                   <div className="font-medium text-slate-100">{employee.empName}</div>
                   <div className="text-xs text-slate-500">{employee.empCode}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses[employee.status] || statusClasses.Active}`}>
+                    {employee.status || 'Active'}
+                  </span>
                 </td>
                 <td className="px-4 py-3">{employee.accessCard}</td>
                 <td className="px-4 py-3">{employee.dateOfLeaving || '—'}</td>
