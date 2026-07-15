@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 const initialCardForm = { cardNumber: '', employeeName: '', employeeCode: '', status: 'Assigned', returnedAt: '' };
 const initialAssetForm = { itemType: 'Laptop', serialNumber: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
@@ -9,9 +9,30 @@ function InventoryPage({ inventory, onRefresh }) {
   const [cardForm, setCardForm] = useState(initialCardForm);
   const [assetForm, setAssetForm] = useState(initialAssetForm);
   const [message, setMessage] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const accessCards = inventory.accessCards || [];
   const itAssets = inventory.itAssets || [];
+
+  const filteredAccessCards = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return accessCards;
+
+    return accessCards.filter((card) => {
+      const haystack = [card.cardNumber, card.employeeName, card.employeeCode, card.status].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [accessCards, searchTerm]);
+
+  const filteredItAssets = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return itAssets;
+
+    return itAssets.filter((asset) => {
+      const haystack = [asset.itemType, asset.serialNumber, asset.employeeName, asset.employeeCode, asset.status, (asset.history || []).map((entry) => entry.employeeName || entry.employeeCode).filter(Boolean).join(' ')].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [itAssets, searchTerm]);
 
   const renderJourney = (item) => {
     const history = Array.isArray(item?.history) ? item.history : [];
@@ -25,6 +46,38 @@ function InventoryPage({ inventory, onRefresh }) {
   };
 
   const currentLabel = activeTab === 'accessCards' ? 'Access cards' : 'IT assets';
+
+  const handleDeleteCard = async (cardId) => {
+    const confirmed = window.confirm('Delete this access card?');
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/inventory/access-cards/${cardId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error('failed');
+      setMessage('Access card deleted.');
+      onRefresh();
+    } catch (error) {
+      setMessage('Unable to delete access card.');
+    }
+  };
+
+  const handleDeleteAsset = async (assetId) => {
+    const confirmed = window.confirm('Delete this IT asset?');
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/inventory/it-assets/${assetId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) throw new Error('failed');
+      setMessage('IT asset deleted.');
+      onRefresh();
+    } catch (error) {
+      setMessage('Unable to delete IT asset.');
+    }
+  };
 
   const handleCardSubmit = async (event) => {
     event.preventDefault();
@@ -82,9 +135,17 @@ function InventoryPage({ inventory, onRefresh }) {
       {message ? <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">{message}</div> : null}
 
       <div className="rounded-3xl border border-slate-800 bg-slate-900 p-4">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-slate-100">{currentLabel}</h3>
-          <span className="text-sm text-slate-400">{activeTab === 'accessCards' ? `${accessCards.length} cards` : `${itAssets.length} assets`}</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder={`Search ${activeTab === 'accessCards' ? 'cards' : 'assets'}`}
+              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none"
+            />
+            <span className="text-sm text-slate-400">{activeTab === 'accessCards' ? `${filteredAccessCards.length} cards` : `${filteredItAssets.length} assets`}</span>
+          </div>
         </div>
 
         {activeTab === 'accessCards' ? (
@@ -118,6 +179,7 @@ function InventoryPage({ inventory, onRefresh }) {
                     <th className="px-3 py-3">Employee</th>
                     <th className="px-3 py-3">Status</th>
                     <th className="px-3 py-3">Returned on</th>
+                    <th className="px-3 py-3">Action</th>
                   </>
                 ) : (
                   <>
@@ -126,30 +188,45 @@ function InventoryPage({ inventory, onRefresh }) {
                     <th className="px-3 py-3">Current holder</th>
                     <th className="px-3 py-3">Status</th>
                     <th className="px-3 py-3">Journey</th>
+                    <th className="px-3 py-3">Action</th>
                   </>
                 )}
               </tr>
             </thead>
             <tbody>
               {activeTab === 'accessCards' ? (
-                accessCards.map((card) => (
+                filteredAccessCards.length ? filteredAccessCards.map((card) => (
                   <tr key={card.id} className="cursor-pointer border-b border-slate-800/80 hover:bg-slate-800/70" onClick={() => setSelectedItem(card)}>
                     <td className="px-3 py-3 font-medium text-slate-100">{card.cardNumber}</td>
                     <td className="px-3 py-3">{card.employeeName || 'Unassigned'}</td>
                     <td className="px-3 py-3">{card.status}</td>
                     <td className="px-3 py-3">{card.returnedAt || '—'}</td>
+                    <td className="px-3 py-3">
+                      <button type="button" onClick={(event) => { event.stopPropagation(); handleDeleteCard(card.id); }} className="text-sm font-semibold text-rose-300">Delete</button>
+                    </td>
                   </tr>
-                ))
+                )) : (
+                  <tr>
+                    <td colSpan="5" className="px-3 py-6 text-center text-sm text-slate-400">No cards match the current search.</td>
+                  </tr>
+                )
               ) : (
-                itAssets.map((asset) => (
+                filteredItAssets.length ? filteredItAssets.map((asset) => (
                   <tr key={asset.id} className="cursor-pointer border-b border-slate-800/80 align-top hover:bg-slate-800/70" onClick={() => setSelectedItem(asset)}>
                     <td className="px-3 py-3 font-medium text-slate-100">{asset.itemType}</td>
                     <td className="px-3 py-3">{asset.serialNumber}</td>
                     <td className="px-3 py-3">{asset.employeeName || 'Unassigned'}</td>
                     <td className="px-3 py-3">{asset.status}</td>
                     <td className="px-3 py-3 max-w-[18rem] text-slate-400">{renderJourney(asset)}</td>
+                    <td className="px-3 py-3">
+                      <button type="button" onClick={(event) => { event.stopPropagation(); handleDeleteAsset(asset.id); }} className="text-sm font-semibold text-rose-300">Delete</button>
+                    </td>
                   </tr>
-                ))
+                )) : (
+                  <tr>
+                    <td colSpan="6" className="px-3 py-6 text-center text-sm text-slate-400">No assets match the current search.</td>
+                  </tr>
+                )
               )}
             </tbody>
           </table>
@@ -172,7 +249,7 @@ function InventoryPage({ inventory, onRefresh }) {
                 <div className="space-y-3">
                   {renderTimeline(selectedItem).map((entry, index) => (
                     <div key={`${entry.employeeId || 'entry'}-${index}`} className="flex flex-col gap-2 md:flex-row md:items-center">
-                      <div className="flex min-w-[3rem] flex-col items-center md:items-start">
+                      <div className="flex min-w-12 flex-col items-center md:items-start">
                         <div className={`h-3 w-3 rounded-full ${entry.returnedAt ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                         {index < renderTimeline(selectedItem).length - 1 ? <div className="mt-2 hidden h-8 w-px bg-slate-700 md:block" /> : null}
                       </div>

@@ -321,16 +321,33 @@ app.delete('/api/employees/:id', (req, res) => {
     return res.status(404).json({ message: 'Employee not found' });
   }
 
-  const employees = [...data.employees];
-  employees[employeeIndex] = {
-    ...employees[employeeIndex],
-    isArchived: true,
-    dateOfLeaving: employees[employeeIndex].dateOfLeaving || new Date().toISOString().slice(0, 10),
-  };
+  const employeeToDelete = data.employees[employeeIndex];
+  const employees = data.employees.filter((employee) => employee.id !== req.params.id);
+  const inventory = (data.inventory || []).filter((item) => {
+    const matchesEmployee =
+      item.employeeId === req.params.id ||
+      item.allocatedTo === req.params.id ||
+      (employeeToDelete.empCode && item.employeeCode === employeeToDelete.empCode) ||
+      (employeeToDelete.empName && item.employeeName === employeeToDelete.empName);
+    return !matchesEmployee;
+  });
+  const accessCards = (data.accessCards || []).filter((card) => {
+    const matchesEmployee =
+      card.employeeId === req.params.id ||
+      (employeeToDelete.empCode && card.employeeCode === employeeToDelete.empCode) ||
+      (employeeToDelete.empName && card.employeeName === employeeToDelete.empName);
+    return !matchesEmployee;
+  });
 
-  const synced = syncInventory({ ...data, employees });
+  const synced = syncInventory({
+    ...data,
+    employees,
+    inventory,
+    accessCards,
+    itAssets: inventory,
+  });
   writeData(synced);
-  res.json({ success: true, archived: true });
+  res.json({ success: true, deleted: true });
 });
 
 app.post('/api/inventory/access-cards', (req, res) => {
@@ -355,6 +372,21 @@ app.post('/api/inventory/access-cards', (req, res) => {
   res.status(201).json(card);
 });
 
+app.delete('/api/inventory/access-cards/:id', (req, res) => {
+  const data = readData();
+  const accessCards = (data.accessCards || []).filter((card) => card.id !== req.params.id);
+  const employees = (data.employees || []).map((employee) => {
+    if (employee.accessCard && employee.accessCard === req.params.id) {
+      return { ...employee, accessCard: '' };
+    }
+    return employee;
+  });
+
+  const synced = syncInventory({ ...data, employees, accessCards, inventory: data.inventory || [], itAssets: data.itAssets || [] });
+  writeData(synced);
+  res.json({ success: true, deleted: true });
+});
+
 app.post('/api/inventory/it-assets', (req, res) => {
   const data = readData();
   const item = {
@@ -377,6 +409,19 @@ app.post('/api/inventory/it-assets', (req, res) => {
   const synced = syncInventory(nextData);
   writeData(synced);
   res.status(201).json(item);
+});
+
+app.delete('/api/inventory/it-assets/:id', (req, res) => {
+  const data = readData();
+  const inventory = (data.inventory || []).filter((item) => item.id !== req.params.id);
+  const employees = (data.employees || []).map((employee) => ({
+    ...employee,
+    assets: (employee.assets || []).filter((asset) => asset.id !== req.params.id),
+  }));
+
+  const synced = syncInventory({ ...data, employees, inventory, itAssets: inventory });
+  writeData(synced);
+  res.json({ success: true, deleted: true });
 });
 
 app.listen(port, () => {
