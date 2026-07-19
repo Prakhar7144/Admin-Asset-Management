@@ -1,28 +1,95 @@
 import express from 'express';
 import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+import mongoose from 'mongoose';
+
+dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const dataFile = path.join(__dirname, 'data', 'store.json');
+const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/employee-asset';
 
 app.use(cors());
 app.use(express.json());
 
-function readData() {
-  if (!fs.existsSync(dataFile)) {
-    return { employees: [], inventory: [] };
-  }
-  const data = fs.readFileSync(dataFile, 'utf8');
-  return JSON.parse(data);
+const appStateSchema = new mongoose.Schema({
+  employees: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  inventory: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  accessCards: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  itAssets: { type: [mongoose.Schema.Types.Mixed], default: [] },
+}, { timestamps: true });
+
+const AppState = mongoose.model('AppState', appStateSchema);
+
+export function createDefaultState() {
+  return {
+    employees: [],
+    inventory: [],
+    accessCards: [],
+    itAssets: [],
+  };
 }
 
-function writeData(data) {
-  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
+function cloneState(state) {
+  return JSON.parse(JSON.stringify(state));
+}
+
+let memoryState = createDefaultState();
+let databaseReady = false;
+
+async function connectToDatabase() {
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  try {
+    await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
+    databaseReady = true;
+    console.log('MongoDB connected');
+  } catch (error) {
+    console.warn('MongoDB connection unavailable, using in-memory state:', error.message);
+  }
+}
+
+async function readData() {
+  if (!databaseReady) {
+    return cloneState(memoryState);
+  }
+
+  const document = await AppState.findOne({}).lean();
+  if (!document) {
+    return createDefaultState();
+  }
+
+  return {
+    employees: Array.isArray(document.employees) ? document.employees : [],
+    inventory: Array.isArray(document.inventory) ? document.inventory : [],
+    accessCards: Array.isArray(document.accessCards) ? document.accessCards : [],
+    itAssets: Array.isArray(document.itAssets) ? document.itAssets : [],
+  };
+}
+
+async function writeData(data) {
+  const normalized = {
+    ...createDefaultState(),
+    ...data,
+    employees: Array.isArray(data?.employees) ? data.employees : [],
+    inventory: Array.isArray(data?.inventory) ? data.inventory : [],
+    accessCards: Array.isArray(data?.accessCards) ? data.accessCards : [],
+    itAssets: Array.isArray(data?.itAssets) ? data.itAssets : [],
+  };
+
+  memoryState = cloneState(normalized);
+
+  if (!databaseReady) {
+    return;
+  }
+
+  await AppState.findOneAndUpdate(
+    {},
+    { $set: normalized },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }
 
 function parseDateInput(value) {
@@ -84,14 +151,14 @@ function normalizeAsset(asset, employee = null, fallback = {}) {
   };
 }
 
-function syncInventory(data) {
+export function syncInventory(data) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const employees = Array.isArray(data.employees) ? data.employees : [];
-  const inventory = Array.isArray(data.inventory) ? data.inventory : [];
-  const persistedAccessCards = Array.isArray(data.accessCards) ? data.accessCards : [];
-  const persistedItAssets = Array.isArray(data.itAssets) ? data.itAssets : [];
+  const employees = Array.isArray(data?.employees) ? data.employees : [];
+  const inventory = Array.isArray(data?.inventory) ? data.inventory : [];
+  const persistedAccessCards = Array.isArray(data?.accessCards) ? data.accessCards : [];
+  const persistedItAssets = Array.isArray(data?.itAssets) ? data.itAssets : [];
 
   const normalizedEmployees = employees.map((employee) => {
     const leavingDate = parseDateInput(employee.dateOfLeaving);
@@ -112,16 +179,6 @@ function syncInventory(data) {
   });
 
   const inventorySource = [...persistedItAssets, ...inventory];
-  const inventoryByKey = new Map();
-  // Index existing inventory preferring a canonical serial (trimmed + lowercased)
-  inventorySource.forEach((item) => {
-    const canonicalSerial = item && item.serialNumber ? String(item.serialNumber).trim().toLowerCase() : null;
-    const key = canonicalSerial ? `serial:${canonicalSerial}` : item.id || null;
-    if (key) inventoryByKey.set(key, item);
-  });
-
-  // Normalize all items (from employees and persisted inventory) then merge
-  // them into a single map keyed by canonical serial (trim + lowercase).
   const allNormalized = [];
   normalizedEmployees.forEach((employee) => {
     employee.assets.forEach((asset) => {
@@ -144,35 +201,26 @@ function syncInventory(data) {
     }
 
     const existing = mergedBySerial.get(key);
-    // Merge histories: combine and collapse entries that belong to the same
-    // employee into a single record. For each employee keep the earliest
-    // assignedAt and latest returnedAt, and mark status accordingly.
     const combined = [...(existing.history || []), ...(item.history || [])];
     const grouped = new Map();
     combined.forEach((h) => {
       const empKey = h.employeeId || `${h.employeeCode || ''}:${h.employeeName || ''}`;
       if (!grouped.has(empKey)) {
-        // track presence of any open (not returned) entry
         grouped.set(empKey, { ...h, _hasOpen: !h.returnedAt });
         return;
       }
       const cur = grouped.get(empKey);
-      // assignedAt: pick earliest non-null
       if (h.assignedAt && (!cur.assignedAt || new Date(h.assignedAt) < new Date(cur.assignedAt))) {
         cur.assignedAt = h.assignedAt;
       }
-      // returnedAt: pick latest non-null
       if (h.returnedAt && (!cur.returnedAt || new Date(h.returnedAt) > new Date(cur.returnedAt))) {
         cur.returnedAt = h.returnedAt;
       }
-      // if any fragment has no returnedAt, keep it open
       if (!h.returnedAt) cur._hasOpen = true;
       grouped.set(empKey, cur);
     });
-    // preserve chronological order by assignedAt
     const uniqueHistory = Array.from(grouped.values()).map((h) => {
       const copy = { ...h };
-      // if any fragment was open, ensure returnedAt is cleared and status shows Assigned
       if (copy._hasOpen) {
         copy.returnedAt = null;
         copy.status = 'Assigned';
@@ -184,7 +232,6 @@ function syncInventory(data) {
     }).sort((a, b) => (a.assignedAt || '').localeCompare(b.assignedAt || ''));
     existing.history = uniqueHistory;
 
-    // If one of the records is currently assigned, prefer that as the current state
     if (item.status === 'Assigned') {
       existing.status = 'Assigned';
       existing.employeeId = item.employeeId || existing.employeeId;
@@ -250,22 +297,22 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/api/employees', (_req, res) => {
-  const data = readData();
+app.get('/api/employees', async (_req, res) => {
+  const data = await readData();
   const synced = syncInventory(data);
-  writeData(synced);
+  await writeData(synced);
   res.json(synced.employees);
 });
 
-app.get('/api/inventory', (_req, res) => {
-  const data = readData();
+app.get('/api/inventory', async (_req, res) => {
+  const data = await readData();
   const synced = syncInventory(data);
-  writeData(synced);
+  await writeData(synced);
   res.json({ accessCards: synced.accessCards, itAssets: synced.itAssets });
 });
 
-app.post('/api/employees', (req, res) => {
-  const data = readData();
+app.post('/api/employees', async (req, res) => {
+  const data = await readData();
   const employee = {
     id: crypto.randomUUID(),
     empCode: req.body.empCode,
@@ -282,12 +329,12 @@ app.post('/api/employees', (req, res) => {
   };
 
   const synced = syncInventory({ ...data, employees: [...data.employees, employee] });
-  writeData(synced);
+  await writeData(synced);
   res.status(201).json(employee);
 });
 
-app.put('/api/employees/:id', (req, res) => {
-  const data = readData();
+app.put('/api/employees/:id', async (req, res) => {
+  const data = await readData();
   const employeeIndex = data.employees.findIndex((employee) => employee.id === req.params.id);
   if (employeeIndex === -1) {
     return res.status(404).json({ message: 'Employee not found' });
@@ -310,12 +357,12 @@ app.put('/api/employees/:id', (req, res) => {
   const employees = [...data.employees];
   employees[employeeIndex] = updatedEmployee;
   const synced = syncInventory({ ...data, employees });
-  writeData(synced);
+  await writeData(synced);
   res.json(updatedEmployee);
 });
 
-app.delete('/api/employees/:id', (req, res) => {
-  const data = readData();
+app.delete('/api/employees/:id', async (req, res) => {
+  const data = await readData();
   const employeeIndex = data.employees.findIndex((employee) => employee.id === req.params.id);
   if (employeeIndex === -1) {
     return res.status(404).json({ message: 'Employee not found' });
@@ -346,12 +393,12 @@ app.delete('/api/employees/:id', (req, res) => {
     accessCards,
     itAssets: inventory,
   });
-  writeData(synced);
+  await writeData(synced);
   res.json({ success: true, deleted: true });
 });
 
-app.post('/api/inventory/access-cards', (req, res) => {
-  const data = readData();
+app.post('/api/inventory/access-cards', async (req, res) => {
+  const data = await readData();
   const card = {
     id: `access-${crypto.randomUUID()}`,
     cardNumber: req.body.cardNumber,
@@ -368,12 +415,12 @@ app.post('/api/inventory/access-cards', (req, res) => {
     accessCards: [...(data.accessCards || []), card],
   };
   const synced = syncInventory(nextData);
-  writeData(synced);
+  await writeData(synced);
   res.status(201).json(card);
 });
 
-app.delete('/api/inventory/access-cards/:id', (req, res) => {
-  const data = readData();
+app.delete('/api/inventory/access-cards/:id', async (req, res) => {
+  const data = await readData();
   const accessCards = (data.accessCards || []).filter((card) => card.id !== req.params.id);
   const employees = (data.employees || []).map((employee) => {
     if (employee.accessCard && employee.accessCard === req.params.id) {
@@ -383,12 +430,12 @@ app.delete('/api/inventory/access-cards/:id', (req, res) => {
   });
 
   const synced = syncInventory({ ...data, employees, accessCards, inventory: data.inventory || [], itAssets: data.itAssets || [] });
-  writeData(synced);
+  await writeData(synced);
   res.json({ success: true, deleted: true });
 });
 
-app.post('/api/inventory/it-assets', (req, res) => {
-  const data = readData();
+app.post('/api/inventory/it-assets', async (req, res) => {
+  const data = await readData();
   const item = {
     id: req.body.id || crypto.randomUUID(),
     itemType: req.body.itemType,
@@ -407,12 +454,12 @@ app.post('/api/inventory/it-assets', (req, res) => {
     inventory: [...(data.inventory || []), item],
   };
   const synced = syncInventory(nextData);
-  writeData(synced);
+  await writeData(synced);
   res.status(201).json(item);
 });
 
-app.delete('/api/inventory/it-assets/:id', (req, res) => {
-  const data = readData();
+app.delete('/api/inventory/it-assets/:id', async (req, res) => {
+  const data = await readData();
   const inventory = (data.inventory || []).filter((item) => item.id !== req.params.id);
   const employees = (data.employees || []).map((employee) => ({
     ...employee,
@@ -420,10 +467,15 @@ app.delete('/api/inventory/it-assets/:id', (req, res) => {
   }));
 
   const synced = syncInventory({ ...data, employees, inventory, itAssets: inventory });
-  writeData(synced);
+  await writeData(synced);
   res.json({ success: true, deleted: true });
 });
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+export { app };
+
+if (process.env.NODE_ENV !== 'test') {
+  await connectToDatabase();
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
