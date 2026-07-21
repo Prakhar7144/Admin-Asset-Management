@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import ExcelJS from 'exceljs';
 
 dotenv.config();
 
@@ -295,6 +296,77 @@ export function syncInventory(data) {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/api/export/excel', async (_req, res) => {
+  const data = await readData();
+  const synced = syncInventory(data);
+  await writeData(synced);
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Employee Asset Portal';
+  workbook.lastModifiedBy = 'Employee Asset Portal';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+
+  const employeesSheet = workbook.addWorksheet('Employees');
+  employeesSheet.columns = [
+    { header: 'Employee ID', key: 'id', width: 24 },
+    { header: 'Employee Code', key: 'empCode', width: 16 },
+    { header: 'Employee Name', key: 'empName', width: 24 },
+    { header: 'Access Card', key: 'accessCard', width: 18 },
+    { header: 'Status', key: 'status', width: 16 },
+    { header: 'Leaving Date', key: 'dateOfLeaving', width: 16 },
+    { header: 'Archived', key: 'isArchived', width: 12 },
+    { header: 'Assets Count', key: 'assetsCount', width: 14 },
+  ];
+
+  synced.employees.forEach((employee) => {
+    employeesSheet.addRow({
+      id: employee.id,
+      empCode: employee.empCode || '',
+      empName: employee.empName || '',
+      accessCard: employee.accessCard || '',
+      status: employee.status || 'Active',
+      dateOfLeaving: employee.dateOfLeaving || '',
+      isArchived: employee.isArchived ? 'Yes' : 'No',
+      assetsCount: employee.assets?.length || 0,
+    });
+  });
+
+  const assetsSheet = workbook.addWorksheet('Assets');
+  assetsSheet.columns = [
+    { header: 'Asset ID', key: 'id', width: 24 },
+    { header: 'Item Type', key: 'itemType', width: 20 },
+    { header: 'Serial Number', key: 'serialNumber', width: 24 },
+    { header: 'Category', key: 'category', width: 20 },
+    { header: 'Status', key: 'status', width: 16 },
+    { header: 'Employee ID', key: 'employeeId', width: 24 },
+    { header: 'Employee Code', key: 'employeeCode', width: 16 },
+    { header: 'Employee Name', key: 'employeeName', width: 24 },
+    { header: 'Allocated To', key: 'allocatedTo', width: 24 },
+    { header: 'History', key: 'history', width: 60 },
+  ];
+
+  (synced.itAssets || []).forEach((asset) => {
+    assetsSheet.addRow({
+      id: asset.id,
+      itemType: asset.itemType || '',
+      serialNumber: asset.serialNumber || '',
+      category: asset.category || '',
+      status: asset.status || 'Unallocated',
+      employeeId: asset.employeeId || '',
+      employeeCode: asset.employeeCode || '',
+      employeeName: asset.employeeName || '',
+      allocatedTo: asset.allocatedTo || '',
+      history: Array.isArray(asset.history) ? asset.history.map((entry) => `${entry.employeeName || entry.employeeCode || 'Unknown'} (${entry.status || 'Assigned'})`).join(' | ') : '',
+    });
+  });
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="employee-assets-export-${new Date().toISOString().slice(0, 10)}.xlsx"`);
+  await workbook.xlsx.write(res);
+  res.end();
 });
 
 app.get('/api/employees', async (_req, res) => {

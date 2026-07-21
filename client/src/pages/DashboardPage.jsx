@@ -1,9 +1,33 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 function DashboardPage({ employees, inventory, onRefresh }) {
+  const [isExporting, setIsExporting] = useState(false);
   const activeCount = employees.filter((employee) => employee.status !== 'Released' && employee.status !== 'Archived').length;
   const historyCount = inventory.itAssets.reduce((sum, asset) => sum + (asset.history?.length || 0), 0);
   const returnedCount = inventory.itAssets.filter((asset) => asset.status === 'Unallocated').length;
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      const response = await fetch('http://localhost:5000/api/export/excel');
+      if (!response.ok) throw new Error('Export failed');
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `employee-assets-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert('Unable to download the Excel report right now.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -12,7 +36,12 @@ function DashboardPage({ employees, inventory, onRefresh }) {
           <h2 className="text-2xl font-semibold">Dashboard</h2>
           <p className="mt-1 text-sm text-slate-400">Overview of active employees, former staff, and the shared inventory pool.</p>
         </div>
-        <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
+        <div className="flex flex-wrap gap-3">
+          <button onClick={handleExportExcel} disabled={isExporting} className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-70">
+            {isExporting ? 'Preparing export...' : 'Download Excel'}
+          </button>
+          <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
