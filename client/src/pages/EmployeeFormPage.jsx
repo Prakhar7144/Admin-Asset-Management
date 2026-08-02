@@ -6,7 +6,7 @@ const initialForm = {
   empName: '',
   accessCard: '',
   dateOfLeaving: '',
-  assets: [{ itemType: 'Laptop', serialNumber: '' }],
+  assets: [{ itemType: 'Laptop', category: 'IT Asset', serialNumber: '', make: '', model: '', description: '' }],
 };
 
 function EmployeeFormPage({ employees, onRefresh }) {
@@ -27,7 +27,11 @@ function EmployeeFormPage({ employees, onRefresh }) {
         assets: (employee.assets || []).map((asset) => ({
           id: asset.id,
           itemType: asset.itemType || 'Laptop',
+          category: asset.category || 'IT Asset',
           serialNumber: asset.serialNumber || '',
+          make: asset.make || '',
+          model: asset.model || '',
+          description: asset.description || '',
         })),
       });
     }
@@ -47,7 +51,7 @@ function EmployeeFormPage({ employees, onRefresh }) {
   };
 
   const addAssetRow = () => {
-    setForm((current) => ({ ...current, assets: [...current.assets, { itemType: 'Headphone', serialNumber: '' }] }));
+    setForm((current) => ({ ...current, assets: [...current.assets, { itemType: 'Headphone', category: 'IT Asset', serialNumber: '', make: '', model: '', description: '' }] }));
   };
 
   const removeAssetRow = (index) => {
@@ -118,13 +122,22 @@ function EmployeeFormPage({ employees, onRefresh }) {
           <div className="space-y-3">
             {form.assets.map((asset, index) => (
               <div key={asset.id || index} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900 p-3 md:grid-cols-[1fr_1.2fr_auto]">
-                <select value={asset.itemType} onChange={(event) => handleAssetChange(index, 'itemType', event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+                <input type="hidden" value={asset.itemType} />
+                <select value={asset.category} onChange={(event) => handleAssetChange(index, 'category', event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+                  <option>IT Asset</option>
+                  <option>Others</option>
                   <option>Laptop</option>
                   <option>Headphone</option>
                   <option>Monitor</option>
-                  <option>Mobile</option>
+                  <option>Docking Station</option>
+                  <option>Key Board</option>
+                  <option>Mouse</option>
+                  <option>Speaker</option>
                 </select>
                 <input value={asset.serialNumber} onChange={(event) => handleAssetChange(index, 'serialNumber', event.target.value)} placeholder="Serial number" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none" />
+                <input value={asset.make} onChange={(event) => handleAssetChange(index, 'make', event.target.value)} placeholder="Make (optional)" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none" />
+                <input value={asset.model} onChange={(event) => handleAssetChange(index, 'model', event.target.value)} placeholder="Model (optional)" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none" />
+                <input value={asset.description} onChange={(event) => handleAssetChange(index, 'description', event.target.value)} placeholder="Description (optional)" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none" />
                 <button type="button" onClick={() => removeAssetRow(index)} className="rounded-lg border border-rose-500/30 px-3 py-2 text-sm text-rose-200">Remove</button>
               </div>
             ))}

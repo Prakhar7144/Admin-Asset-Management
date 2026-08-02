@@ -1,13 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 const initialCardForm = { cardNumber: '', employeeName: '', employeeCode: '', status: 'Assigned', returnedAt: '' };
-const initialAssetForm = { itemType: 'Laptop', serialNumber: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
+const initialAssetForm = { itemType: 'Laptop', serialNumber: '', category: 'IT Asset', make: '', model: '', description: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
 
 function InventoryPage({ inventory, onRefresh }) {
   const [activeTab, setActiveTab] = useState('itAssets');
   const [selectedItem, setSelectedItem] = useState(null);
   const [cardForm, setCardForm] = useState(initialCardForm);
   const [assetForm, setAssetForm] = useState(initialAssetForm);
+  const assetFormRef = useRef(null);
   const [message, setMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -29,7 +30,18 @@ function InventoryPage({ inventory, onRefresh }) {
     if (!query) return itAssets;
 
     return itAssets.filter((asset) => {
-      const haystack = [asset.itemType, asset.serialNumber, asset.employeeName, asset.employeeCode, asset.status, (asset.history || []).map((entry) => entry.employeeName || entry.employeeCode).filter(Boolean).join(' ')].filter(Boolean).join(' ').toLowerCase();
+      const haystack = [
+        asset.itemType,
+        asset.serialNumber,
+        asset.category,
+        asset.make,
+        asset.model,
+        asset.description,
+        asset.employeeName,
+        asset.employeeCode,
+        asset.status,
+        (asset.history || []).map((entry) => entry.employeeName || entry.employeeCode).filter(Boolean).join(' '),
+      ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(query);
     });
   }, [itAssets, searchTerm]);
@@ -144,6 +156,15 @@ function InventoryPage({ inventory, onRefresh }) {
               placeholder={`Search ${activeTab === 'accessCards' ? 'cards' : 'assets'}`}
               className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none"
             />
+            {activeTab === 'itAssets' ? (
+              <button
+                type="button"
+                onClick={() => assetFormRef.current?.requestSubmit()}
+                className="rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950"
+              >
+                Add asset
+              </button>
+            ) : null}
             <span className="text-sm text-slate-400">{activeTab === 'accessCards' ? `${filteredAccessCards.length} cards` : `${filteredItAssets.length} assets`}</span>
           </div>
         </div>
@@ -156,16 +177,23 @@ function InventoryPage({ inventory, onRefresh }) {
             <button type="submit" className="rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950">Add card</button>
           </form>
         ) : (
-          <form onSubmit={handleAssetSubmit} className="mb-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-4">
-            <select value={assetForm.itemType} onChange={(event) => setAssetForm({ ...assetForm, itemType: event.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm">
+          <form ref={assetFormRef} onSubmit={handleAssetSubmit} className="mb-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 lg:grid-cols-6">
+            <input type="hidden" value={assetForm.itemType} />
+            <select value={assetForm.category} onChange={(event) => setAssetForm({ ...assetForm, category: event.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm">
+              <option>IT Asset</option>
+              <option>Others</option>
               <option>Laptop</option>
-              <option>Monitor</option>
-              <option>Mobile</option>
               <option>Headphone</option>
+              <option>Monitor</option>
+              <option>Docking Station</option>
+              <option>Mouse</option>
+              <option>Speaker</option>
             </select>
             <input value={assetForm.serialNumber} onChange={(event) => setAssetForm({ ...assetForm, serialNumber: event.target.value })} placeholder="Serial number" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" required />
-            <input value={assetForm.employeeName} onChange={(event) => setAssetForm({ ...assetForm, employeeName: event.target.value })} placeholder="Current holder" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
-            <button type="submit" className="rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950">Add asset</button>
+            <input value={assetForm.employeeName} onChange={(event) => setAssetForm({ ...assetForm, employeeName: event.target.value })} placeholder="Employee name" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <input value={assetForm.make} onChange={(event) => setAssetForm({ ...assetForm, make: event.target.value })} placeholder="Make (optional)" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <input value={assetForm.model} onChange={(event) => setAssetForm({ ...assetForm, model: event.target.value })} placeholder="Model (optional)" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <input value={assetForm.description} onChange={(event) => setAssetForm({ ...assetForm, description: event.target.value })} placeholder="Description (optional)" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
           </form>
         )}
 
@@ -185,6 +213,7 @@ function InventoryPage({ inventory, onRefresh }) {
                   <>
                     <th className="px-3 py-3">Asset</th>
                     <th className="px-3 py-3">Serial</th>
+                    <th className="px-3 py-3">Category</th>
                     <th className="px-3 py-3">Current holder</th>
                     <th className="px-3 py-3">Status</th>
                     <th className="px-3 py-3">Journey</th>
@@ -215,6 +244,7 @@ function InventoryPage({ inventory, onRefresh }) {
                   <tr key={asset.id} className="cursor-pointer border-b border-slate-800/80 align-top hover:bg-slate-800/70" onClick={() => setSelectedItem(asset)}>
                     <td className="px-3 py-3 font-medium text-slate-100">{asset.itemType}</td>
                     <td className="px-3 py-3">{asset.serialNumber}</td>
+                    <td className="px-3 py-3">{asset.category || 'IT Asset'}</td>
                     <td className="px-3 py-3">{asset.employeeName || 'Unassigned'}</td>
                     <td className="px-3 py-3">{asset.status}</td>
                     <td className="px-3 py-3 max-w-[18rem] text-slate-400">{renderJourney(asset)}</td>
@@ -224,7 +254,7 @@ function InventoryPage({ inventory, onRefresh }) {
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan="6" className="px-3 py-6 text-center text-sm text-slate-400">No assets match the current search.</td>
+                    <td colSpan="7" className="px-3 py-6 text-center text-sm text-slate-400">No assets match the current search.</td>
                   </tr>
                 )
               )}
@@ -275,6 +305,24 @@ function InventoryPage({ inventory, onRefresh }) {
               ) : (
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-400">No journey data is available yet.</div>
               )}
+            </div>
+            <div className="mt-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-200 md:grid-cols-2">
+              <div>
+                <div className="text-slate-400">Category</div>
+                <div className="font-medium text-slate-100">{selectedItem.category || 'IT Asset'}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">Make</div>
+                <div className="font-medium text-slate-100">{selectedItem.make || '—'}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">Model</div>
+                <div className="font-medium text-slate-100">{selectedItem.model || '—'}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">Description</div>
+                <div className="font-medium text-slate-100">{selectedItem.description || '—'}</div>
+              </div>
             </div>
           </div>
         </div>
