@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import { Employee } from '../models/employeeModel.js';
 import { InventoryItem } from '../models/inventoryModel.js';
 import { AccessCard } from '../models/accessCardModel.js';
+import { isDateOfLeavingPastOrToday, parseDateSafe } from '../utils/dateUtils.js';
 
 function toObjectId(value) {
   if (!value) return null;
@@ -65,7 +66,20 @@ function buildHistoryEntry(employee, assignedAt = null) {
   };
 }
 
-async function createInventoryItemFromAsset(asset, employee) {
+function buildReturnedHistoryEntry(employee) {
+  const returnedAt = parseDateSafe(employee.dateOfLeaving);
+  return {
+    employeeId: employee._id || null,
+    employeeCode: employee.empCode || '',
+    employeeName: employee.empName || '',
+    assignedAt: returnedAt,
+    returnedAt,
+    status: 'Returned',
+  };
+}
+
+async function createInventoryItemFromAsset(asset, employee, options = {}) {
+  const hasLeft = Boolean(options.hasLeft);
   const item = await InventoryItem.create({
     itemType: asset.itemType || 'Laptop',
     serialNumber: asset.serialNumber || crypto.randomUUID(),
@@ -73,12 +87,12 @@ async function createInventoryItemFromAsset(asset, employee) {
     make: asset.make || null,
     model: asset.model || null,
     description: asset.description || null,
-    status: 'Assigned',
-    employeeId: employee._id,
-    employeeCode: employee.empCode,
-    employeeName: employee.empName,
-    allocatedTo: employee._id,
-    history: [buildHistoryEntry(employee)],
+    status: hasLeft ? 'Unallocated' : 'Assigned',
+    employeeId: hasLeft ? null : employee._id,
+    employeeCode: hasLeft ? null : employee.empCode,
+    employeeName: hasLeft ? null : employee.empName,
+    allocatedTo: hasLeft ? null : employee._id,
+    history: [hasLeft ? buildReturnedHistoryEntry(employee) : buildHistoryEntry(employee)],
   });
 
   return item;
@@ -110,6 +124,8 @@ export async function listInventory() {
 }
 
 export async function createEmployee(input) {
+  const hasLeft = isDateOfLeavingPastOrToday(input.dateOfLeaving);
+
   const employee = await Employee.create({
     appId: input.appId || input.id || crypto.randomUUID(),
     empCode: input.empCode,
@@ -117,19 +133,21 @@ export async function createEmployee(input) {
     accessCard: input.accessCard || '',
     dateOfLeaving: input.dateOfLeaving || '',
     isArchived: Boolean(input.isArchived),
-    status: input.isArchived ? 'Archived' : 'Active',
+    status: input.isArchived ? 'Archived' : (hasLeft ? 'Released' : 'Active'),
   });
 
   const assetIds = [];
   for (const asset of input.assets || []) {
-    const createdItem = await createInventoryItemFromAsset(asset, employee);
-    assetIds.push(createdItem._id);
+    const createdItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
+    if (!hasLeft) {
+      assetIds.push(createdItem._id);
+    }
   }
 
   employee.assets = assetIds;
   await employee.save();
 
-  const savedEmployee = await Employee.findById(employee._id).populate('assets');
+  const savedEmployee = await Employee.findById(employee._id).populate('assets').lean();
   return toEmployeeResponse(savedEmployee);
 }
 
@@ -144,7 +162,8 @@ export async function updateEmployee(id, input) {
   employee.accessCard = input.accessCard || '';
   employee.dateOfLeaving = input.dateOfLeaving || '';
   employee.isArchived = Boolean(input.isArchived);
-  employee.status = employee.isArchived ? 'Archived' : 'Active';
+  const hasLeft = isDateOfLeavingPastOrToday(employee.dateOfLeaving);
+  employee.status = employee.isArchived ? 'Archived' : (hasLeft ? 'Released' : 'Active');
 
   const previousAssetIds = (employee.assets || []).map((assetId) => assetId.toString());
   const nextAssetIds = [];
@@ -154,8 +173,8 @@ export async function updateEmployee(id, input) {
     let inventoryItem = existingAssetId ? await InventoryItem.findById(existingAssetId) : null;
 
     if (!inventoryItem) {
-      inventoryItem = await createInventoryItemFromAsset(asset, employee);
-    } else {
+      inventoryItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
+    } else if (!hasLeft) {
       inventoryItem.itemType = asset.itemType || inventoryItem.itemType;
       inventoryItem.serialNumber = asset.serialNumber || inventoryItem.serialNumber;
       inventoryItem.category = asset.category || inventoryItem.category || 'IT Asset';
@@ -172,19 +191,42 @@ export async function updateEmployee(id, input) {
       }
       await inventoryItem.save();
     }
+    // When hasLeft is true and the item already existed, it's left untouched here and
+    // excluded from nextAssetIds below, so the removedAssetIds cleanup unassigns it and
+    // closes its history with a Returned entry dated to the employee's leaving date.
 
-    nextAssetIds.push(inventoryItem._id);
+    if (!hasLeft) {
+      nextAssetIds.push(inventoryItem._id);
+    }
   }
 
-  await InventoryItem.updateMany(
-    { _id: { $in: previousAssetIds.map((assetId) => new mongoose.Types.ObjectId(assetId)) } },
-    { $set: { employeeId: null, employeeCode: null, employeeName: null, allocatedTo: null, status: 'Unallocated' } }
-  );
+  const nextAssetIdSet = new Set(nextAssetIds.map((assetId) => assetId.toString()));
+  const removedAssetIds = previousAssetIds.filter((assetId) => !nextAssetIdSet.has(assetId));
+  const removalReturnedAt = hasLeft ? parseDateSafe(employee.dateOfLeaving) : new Date();
+
+  for (const removedAssetId of removedAssetIds) {
+    const removedItem = await InventoryItem.findById(removedAssetId);
+    if (!removedItem) continue;
+
+    if (Array.isArray(removedItem.history) && removedItem.history.length) {
+      const lastEntry = removedItem.history[removedItem.history.length - 1];
+      if (!lastEntry.returnedAt) {
+        lastEntry.returnedAt = removalReturnedAt;
+        lastEntry.status = 'Returned';
+      }
+    }
+    removedItem.employeeId = null;
+    removedItem.employeeCode = null;
+    removedItem.employeeName = null;
+    removedItem.allocatedTo = null;
+    removedItem.status = 'Unallocated';
+    await removedItem.save();
+  }
 
   employee.assets = nextAssetIds;
   await employee.save();
 
-  const savedEmployee = await Employee.findById(employee._id).populate('assets');
+  const savedEmployee = await Employee.findById(employee._id).populate('assets').lean();
   return toEmployeeResponse(savedEmployee);
 }
 
@@ -200,18 +242,22 @@ export async function deleteEmployee(id) {
 }
 
 export async function createAccessCard(input) {
+  const employeeObjectId = input.employeeId ? toObjectId(input.employeeId) : null;
+  const employee = employeeObjectId ? await Employee.findById(employeeObjectId) : null;
+
   const card = await AccessCard.create({
     cardNumber: input.cardNumber || input.serialNumber || crypto.randomUUID(),
-    employeeId: input.employeeId ? toObjectId(input.employeeId) : null,
-    employeeCode: input.employeeCode || null,
-    employeeName: input.employeeName || null,
-    status: input.status || 'Assigned',
-    assignedAt: input.assignedAt || new Date(),
-    returnedAt: input.returnedAt || null,
+    employeeId: employee ? employee._id : null,
+    employeeCode: employee ? employee.empCode : null,
+    employeeName: employee ? employee.empName : null,
+    status: employee ? 'Assigned' : 'Unassigned',
+    assignedAt: employee ? new Date() : null,
+    returnedAt: null,
   });
 
-  if (input.employeeId) {
-    await Employee.findByIdAndUpdate(input.employeeId, { accessCard: card.cardNumber });
+  if (employee) {
+    employee.accessCard = card.cardNumber;
+    await employee.save();
   }
 
   return {
@@ -243,6 +289,9 @@ export async function deleteAccessCard(id) {
 }
 
 export async function createItAsset(input) {
+  const employeeObjectId = input.employeeId ? toObjectId(input.employeeId) : null;
+  const employee = employeeObjectId ? await Employee.findById(employeeObjectId) : null;
+
   const item = await InventoryItem.create({
     itemType: input.itemType,
     serialNumber: input.serialNumber || crypto.randomUUID(),
@@ -250,15 +299,21 @@ export async function createItAsset(input) {
     make: input.make || null,
     model: input.model || null,
     description: input.description || null,
-    status: input.status || 'Unallocated',
-    employeeId: input.employeeId ? toObjectId(input.employeeId) : null,
-    employeeCode: input.employeeCode || null,
-    employeeName: input.employeeName || null,
-    allocatedTo: input.employeeId ? toObjectId(input.employeeId) : null,
-    history: input.employeeId ? [{ employeeId: toObjectId(input.employeeId), employeeCode: input.employeeCode || '', employeeName: input.employeeName || '', assignedAt: new Date(), returnedAt: null, status: 'Assigned' }] : [],
+    status: employee ? 'Assigned' : 'Unallocated',
+    employeeId: employee ? employee._id : null,
+    employeeCode: employee ? employee.empCode : null,
+    employeeName: employee ? employee.empName : null,
+    allocatedTo: employee ? employee._id : null,
+    history: employee ? [buildHistoryEntry(employee)] : [],
   });
 
-  return toInventoryResponse(item);
+  if (employee) {
+    employee.assets = Array.isArray(employee.assets) ? employee.assets : [];
+    employee.assets.push(item._id);
+    await employee.save();
+  }
+
+  return toInventoryResponse(item.toObject());
 }
 
 export async function deleteItAsset(id) {
@@ -284,7 +339,6 @@ export async function exportExcel(res) {
 
   const employeesSheet = workbook.addWorksheet('Employees');
   employeesSheet.columns = [
-    { header: 'Employee ID', key: 'id', width: 24 },
     { header: 'Employee Code', key: 'empCode', width: 16 },
     { header: 'Employee Name', key: 'empName', width: 24 },
     { header: 'Access Card', key: 'accessCard', width: 18 },
@@ -296,7 +350,6 @@ export async function exportExcel(res) {
 
   employees.forEach((employee) => {
     employeesSheet.addRow({
-      id: employee._id?.toString?.() || employee.id,
       empCode: employee.empCode || '',
       empName: employee.empName || '',
       accessCard: employee.accessCard || '',
@@ -317,7 +370,6 @@ export async function exportExcel(res) {
     { header: 'Model', key: 'model', width: 18 },
     { header: 'Description', key: 'description', width: 36 },
     { header: 'Status', key: 'status', width: 16 },
-    { header: 'Employee ID', key: 'employeeId', width: 24 },
     { header: 'Employee Code', key: 'employeeCode', width: 16 },
     { header: 'Employee Name', key: 'employeeName', width: 24 },
     { header: 'Allocated To', key: 'allocatedTo', width: 24 },
@@ -329,10 +381,11 @@ export async function exportExcel(res) {
       id: asset._id?.toString?.() || asset.id,
       itemType: asset.itemType || '',
       serialNumber: asset.serialNumber || '',
-      category: asset.category || '',      make: asset.make || '',
+      category: asset.category || '',
+      make: asset.make || '',
       model: asset.model || '',
-      description: asset.description || '',      status: asset.status || 'Unallocated',
-      employeeId: asset.employeeId || '',
+      description: asset.description || '',
+      status: asset.status || 'Unallocated',
       employeeCode: asset.employeeCode || '',
       employeeName: asset.employeeName || '',
       allocatedTo: asset.allocatedTo || '',

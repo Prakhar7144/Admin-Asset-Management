@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-function EmployeesPage({ employees, onRefresh }) {
+function EmployeesPage({ employees }) {
   const [searchTerm, setSearchTerm] = useState('');
 
   const statusClasses = {
@@ -20,21 +20,6 @@ function EmployeesPage({ employees, onRefresh }) {
     });
   }, [employees, searchTerm]);
 
-  const handleDeleteEmployee = async (employeeId) => {
-    const confirmed = window.confirm('Delete this employee permanently?');
-    if (!confirmed) return;
-
-    try {
-      const response = await fetch(`http://localhost:5000/api/employees/${employeeId}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error('failed');
-      onRefresh();
-    } catch (error) {
-      window.alert('Unable to delete employee.');
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -43,7 +28,6 @@ function EmployeesPage({ employees, onRefresh }) {
           <p className="mt-1 text-sm text-slate-400">Browse active and former employees, including archived records that remain visible.</p>
         </div>
         <div className="flex gap-3">
-          <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
           <Link to="/employees/new" className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950">Add employee</Link>
         </div>
       </div>
@@ -85,10 +69,7 @@ function EmployeesPage({ employees, onRefresh }) {
                 <td className="px-4 py-3">{employee.dateOfLeaving || '—'}</td>
                 <td className="px-4 py-3">{employee.assets?.length || 0}</td>
                 <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-3">
-                    <Link to={`/employees/${employee.id}`} className="text-sm font-semibold text-cyan-300">Open</Link>
-                    <button type="button" onClick={() => handleDeleteEmployee(employee.id)} className="text-sm font-semibold text-rose-300">Delete</button>
-                  </div>
+                  <Link to={`/employees/${employee.id}`} className="text-sm font-semibold text-cyan-300">Open</Link>
                 </td>
               </tr>
             )) : (

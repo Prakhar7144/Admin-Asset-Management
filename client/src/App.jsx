@@ -71,7 +71,7 @@ function App() {
             <Route path="/employees" element={<EmployeesPage employees={employees} inventory={inventory} onRefresh={fetchData} />} />
             <Route path="/employees/new" element={<EmployeeFormPage employees={employees} onRefresh={fetchData} />} />
             <Route path="/employees/:employeeId" element={<EmployeeFormPage employees={employees} onRefresh={fetchData} />} />
-            <Route path="/inventory" element={<InventoryPage inventory={inventory} onRefresh={fetchData} />} />
+            <Route path="/inventory" element={<InventoryPage inventory={inventory} employees={employees} onRefresh={fetchData} />} />
             <Route path="*" element={<div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-center"><h2 className="text-xl font-semibold">Page not found</h2><p className="mt-2 text-sm text-slate-400">Return to the dashboard to continue.</p><Link to="/" className="mt-4 inline-block rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950">Go home</Link></div>} />
           </Routes>
         </main>

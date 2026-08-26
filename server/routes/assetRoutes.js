@@ -1,7 +1,9 @@
 import express from 'express';
+import multer from 'multer';
 import {
   healthHandler,
   exportExcelHandler,
+  importExcelHandler,
   listEmployeesHandler,
   listInventoryHandler,
   createEmployeeHandler,
@@ -15,8 +17,21 @@ import {
 
 const router = express.Router();
 
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const isExcel = /\.xlsx$/i.test(file.originalname);
+    if (!isExcel) {
+      return cb(new Error('Only .xlsx files are supported.'));
+    }
+    cb(null, true);
+  },
+});
+
 router.get('/health', healthHandler);
 router.get('/export/excel', exportExcelHandler);
+router.post('/import/excel', upload.single('file'), importExcelHandler);
 router.get('/employees', listEmployeesHandler);
 router.get('/inventory', listInventoryHandler);
 router.post('/employees', createEmployeeHandler);

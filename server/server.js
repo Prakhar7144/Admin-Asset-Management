@@ -15,6 +15,11 @@ app.use(cors());
 app.use(express.json());
 app.use('/api', assetRoutes);
 
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(400).json({ success: false, message: err.message || 'Request failed.' });
+});
+
 export { app };
 
 if (process.env.NODE_ENV !== 'test') {

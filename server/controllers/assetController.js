@@ -1,3 +1,4 @@
+import fs from 'fs';
 import {
   listEmployees,
   listInventory,
@@ -10,6 +11,7 @@ import {
   deleteItAsset,
   exportExcel,
 } from '../services/assetService.js';
+import { importExcel } from '../scripts/importFromExcel.js';
 
 export async function healthHandler(_req, res) {
   res.json({ status: 'ok' });
@@ -17,6 +19,21 @@ export async function healthHandler(_req, res) {
 
 export async function exportExcelHandler(_req, res) {
   await exportExcel(res);
+}
+
+export async function importExcelHandler(req, res) {
+  if (!req.file) {
+    return res.status(400).json({ message: 'No file uploaded. Attach an .xlsx file.' });
+  }
+
+  try {
+    const summary = await importExcel(req.file.path);
+    res.json({ success: true, ...summary });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message || 'Import failed.' });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
 }
 
 export async function listEmployeesHandler(_req, res) {

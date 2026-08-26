@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import ExcelJS from 'exceljs';
 import mongoose from 'mongoose';
 import crypto from 'crypto';
@@ -8,6 +8,7 @@ import { connectToDatabase } from '../config/db.js';
 import { Employee } from '../models/employeeModel.js';
 import { AccessCard } from '../models/accessCardModel.js';
 import { InventoryItem } from '../models/inventoryModel.js';
+import { isDateOfLeavingPastOrToday, parseDateSafe } from '../utils/dateUtils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_PATH = path.join(__dirname, '..', 'import-excel.log');
@@ -85,7 +86,20 @@ function buildHistoryEntry(employee) {
   };
 }
 
-async function findOrCreateEmployee(data) {
+function buildReturnedHistoryEntry(employee) {
+  const returnedAt = parseDateSafe(employee.dateOfLeaving);
+  return {
+    employeeId: employee._id,
+    employeeCode: employee.empCode || '',
+    employeeName: employee.empName || '',
+    assignedAt: returnedAt,
+    returnedAt,
+    status: 'Returned',
+  };
+}
+
+async function findOrCreateEmployee(data, options = {}) {
+  const hasLeft = Boolean(options.hasLeft);
   const empCode = String(data.employeeCode || '').trim();
   if (!empCode) {
     throw new Error('Employee Code is required');
@@ -100,10 +114,10 @@ async function findOrCreateEmployee(data) {
       accessCard: '',
       dateOfLeaving: String(data.dateOfLeaving || '').trim(),
       isArchived: false,
-      status: 'Active',
+      status: hasLeft ? 'Released' : 'Active',
       assets: [],
     });
-    logInfo(`Created employee ${empCode}`);
+    logInfo(`Created employee ${empCode}${hasLeft ? ' (Released — date of leaving has passed)' : ''}`);
   } else {
     let changed = false;
     if (data.name && data.name.trim() && employee.empName !== data.name.trim()) {
@@ -112,6 +126,10 @@ async function findOrCreateEmployee(data) {
     }
     if (data.dateOfLeaving && employee.dateOfLeaving !== data.dateOfLeaving.trim()) {
       employee.dateOfLeaving = data.dateOfLeaving.trim();
+      changed = true;
+    }
+    if (hasLeft && employee.status !== 'Released') {
+      employee.status = 'Released';
       changed = true;
     }
     if (changed) {
@@ -166,28 +184,79 @@ async function createOrUpdateAccessCard(cardNumber, employee) {
   return card;
 }
 
-async function createInventoryAsset(data, employee, options = { other: false }) {
+async function reassignExistingAsset(existing, employee, options = {}) {
+  existing.itemType = options.itemType || existing.itemType;
+  existing.make = options.make !== undefined ? options.make : existing.make;
+  existing.model = options.model !== undefined ? options.model : existing.model;
+
+  existing.history = Array.isArray(existing.history) ? existing.history : [];
+  const lastEntry = existing.history[existing.history.length - 1];
+  if (lastEntry && !lastEntry.returnedAt) {
+    lastEntry.returnedAt = new Date();
+    lastEntry.status = 'Returned';
+  }
+
+  if (options.hasLeft) {
+    existing.history.push(buildReturnedHistoryEntry(employee));
+    existing.status = 'Unallocated';
+    existing.employeeId = null;
+    existing.employeeCode = null;
+    existing.employeeName = null;
+    existing.allocatedTo = null;
+  } else {
+    existing.history.push(buildHistoryEntry(employee));
+    existing.status = 'Assigned';
+    existing.employeeId = employee._id;
+    existing.employeeCode = employee.empCode;
+    existing.employeeName = employee.empName;
+    existing.allocatedTo = employee._id;
+
+    employee.assets = Array.isArray(employee.assets) ? employee.assets : [];
+    if (!employee.assets.some((assetId) => assetId.equals(existing._id))) {
+      employee.assets.push(existing._id);
+      await employee.save();
+    }
+  }
+
+  await existing.save();
+  logInfo(`Reassigned asset ${existing.serialNumber} to ${employee.empCode}${options.hasLeft ? ' as Unallocated (employee already left)' : ''}`);
+  return existing;
+}
+
+async function createInventoryAsset(data, employee, options = { other: false, hasLeft: false }) {
   const trimmedSerial = String(data.serialNumber || '').trim();
   const hasSerial = Boolean(trimmedSerial);
-  const assetType = String(data.assetType || '').trim() || (options.other ? 'Other' : 'Unknown');
+  const assetType = options.other ? 'Other' : (String(data.assetType || '').trim() || 'Unknown');
   const make = String(data.make || '').trim() || null;
   const model = String(data.model || '').trim() || null;
   const description = options.other ? String(data.otherAssets || '').trim() || null : null;
   const category = options.other ? 'Others' : 'IT Asset';
 
   if (!options.other && !hasSerial) {
-    logWarn(`Skipping main asset for employee ${employee.empCode} because serial number is missing.`);
+    logWarn(`Serial number missing for employee ${employee.empCode}; generating a placeholder so the record is still inserted.`);
   }
 
-  if (!options.other) {
+  if (!options.other && hasSerial) {
     const existing = await InventoryItem.findOne({ serialNumber: trimmedSerial });
     if (existing) {
-      logWarn(`Skipping duplicate main asset serial ${trimmedSerial} for employee ${employee.empCode}.`);
-      return null;
+      if (existing.status === 'Assigned' && existing.employeeId) {
+        if (existing.employeeId.equals(employee._id)) {
+          logWarn(`Asset ${trimmedSerial} is already assigned to ${employee.empCode}; skipping duplicate row.`);
+          return null;
+        }
+        logWarn(`Skipping asset serial ${trimmedSerial} for employee ${employee.empCode}: still assigned to ${existing.employeeName || existing.employeeCode || 'another employee'}.`);
+        return null;
+      }
+
+      return reassignExistingAsset(existing, employee, { itemType: assetType, make, model, hasLeft: options.hasLeft });
     }
   }
 
-  const serialNumber = options.other ? `OTHER-${crypto.randomUUID()}` : trimmedSerial;
+  const serialNumber = options.other
+    ? `OTHER-${crypto.randomUUID()}`
+    : hasSerial
+      ? trimmedSerial
+      : `NA-${crypto.randomUUID()}`;
 
   const item = await InventoryItem.create({
     itemType: assetType,
@@ -196,23 +265,25 @@ async function createInventoryAsset(data, employee, options = { other: false }) 
     make,
     model,
     description,
-    status: 'Assigned',
-    employeeId: employee._id,
-    employeeCode: employee.empCode,
-    employeeName: employee.empName,
-    allocatedTo: employee._id,
-    history: [buildHistoryEntry(employee)],
+    status: options.hasLeft ? 'Unallocated' : 'Assigned',
+    employeeId: options.hasLeft ? null : employee._id,
+    employeeCode: options.hasLeft ? null : employee.empCode,
+    employeeName: options.hasLeft ? null : employee.empName,
+    allocatedTo: options.hasLeft ? null : employee._id,
+    history: [options.hasLeft ? buildReturnedHistoryEntry(employee) : buildHistoryEntry(employee)],
   });
 
-  employee.assets = Array.isArray(employee.assets) ? employee.assets : [];
-  employee.assets.push(item._id);
-  await employee.save();
+  if (!options.hasLeft) {
+    employee.assets = Array.isArray(employee.assets) ? employee.assets : [];
+    employee.assets.push(item._id);
+    await employee.save();
+  }
 
-  logInfo(`Created ${options.other ? 'other asset' : 'asset'} ${item.serialNumber} for ${employee.empCode}`);
+  logInfo(`Created ${options.other ? 'other asset' : 'asset'} ${item.serialNumber} for ${employee.empCode}${options.hasLeft ? ' as Unallocated (employee already left)' : ''}`);
   return item;
 }
 
-async function importExcel(filePath) {
+export async function importExcel(filePath) {
   if (!filePath) {
     throw new Error('Excel file path is required. Run: node scripts/importFromExcel.js <file-path>');
   }
@@ -259,41 +330,48 @@ async function importExcel(filePath) {
     }
 
     if (!employeeCode) {
-      logWarn(`Skipping row ${rowNumber}: missing Employee Code.`);
+      logWarn(`Skipping row ${rowNumber}: missing Employee Code (cannot link the row to any employee).`);
       skipped += 1;
       continue;
     }
 
     if (!name) {
-      logWarn(`Skipping row ${rowNumber}: missing Name for employee ${employeeCode}.`);
-      skipped += 1;
-      continue;
+      logWarn(`Row ${rowNumber}: Name is missing for employee ${employeeCode}; continuing with the fields that are present.`);
     }
 
-    const beforeCount = await Employee.countDocuments({ empCode: employeeCode });
-    const employee = await findOrCreateEmployee(rowData);
-    const afterCount = await Employee.countDocuments({ empCode: employeeCode });
-    if (afterCount > beforeCount) {
-      createdEmployees += 1;
-    }
+    const hasLeft = isDateOfLeavingPastOrToday(rowData.dateOfLeaving);
 
-    if (rowData.accessCardNo) {
-      await createOrUpdateAccessCard(rowData.accessCardNo, employee);
-    }
-
-    const asset = await createInventoryAsset(rowData, employee, { other: false });
-    if (asset) {
-      createdAssets += 1;
-    }
-
-    if (otherAssetsText) {
-      const otherAsset = await createInventoryAsset(rowData, employee, { other: true });
-      if (otherAsset) {
-        createdOthers += 1;
+    try {
+      const beforeCount = await Employee.countDocuments({ empCode: employeeCode });
+      const employee = await findOrCreateEmployee(rowData, { hasLeft });
+      const afterCount = await Employee.countDocuments({ empCode: employeeCode });
+      if (afterCount > beforeCount) {
+        createdEmployees += 1;
       }
-    }
 
-    processed += 1;
+      if (rowData.accessCardNo) {
+        await createOrUpdateAccessCard(rowData.accessCardNo, employee);
+      }
+
+      if (assetType || serialNumber) {
+        const asset = await createInventoryAsset(rowData, employee, { other: false, hasLeft });
+        if (asset) {
+          createdAssets += 1;
+        }
+      }
+
+      if (otherAssetsText) {
+        const otherAsset = await createInventoryAsset(rowData, employee, { other: true, hasLeft });
+        if (otherAsset) {
+          createdOthers += 1;
+        }
+      }
+
+      processed += 1;
+    } catch (error) {
+      logError(`Row ${rowNumber} (employee ${employeeCode}) failed: ${error.message || error}. Continuing with the remaining rows.`);
+      skipped += 1;
+    }
   }
 
   logInfo('Import complete.');
@@ -302,6 +380,8 @@ async function importExcel(filePath) {
   logInfo(`Assets created: ${createdAssets}`);
   logInfo(`Other assets created: ${createdOthers}`);
   logInfo(`Rows skipped: ${skipped}`);
+
+  return { processed, skipped, createdEmployees, createdAssets, createdOthers };
 }
 
 async function main() {
@@ -316,4 +396,7 @@ async function main() {
   }
 }
 
-main();
+const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMainModule) {
+  main();
+}

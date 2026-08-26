@@ -6,7 +6,7 @@ const initialForm = {
   empName: '',
   accessCard: '',
   dateOfLeaving: '',
-  assets: [{ itemType: 'Laptop', category: 'IT Asset', serialNumber: '', make: '', model: '', description: '' }],
+  assets: [{ itemType: 'Laptop', category: 'Laptop', serialNumber: '', make: '', model: '', description: '' }],
 };
 
 function EmployeeFormPage({ employees, onRefresh }) {
@@ -27,7 +27,7 @@ function EmployeeFormPage({ employees, onRefresh }) {
         assets: (employee.assets || []).map((asset) => ({
           id: asset.id,
           itemType: asset.itemType || 'Laptop',
-          category: asset.category || 'IT Asset',
+          category: asset.category || 'Laptop',
           serialNumber: asset.serialNumber || '',
           make: asset.make || '',
           model: asset.model || '',
@@ -51,7 +51,7 @@ function EmployeeFormPage({ employees, onRefresh }) {
   };
 
   const addAssetRow = () => {
-    setForm((current) => ({ ...current, assets: [...current.assets, { itemType: 'Headphone', category: 'IT Asset', serialNumber: '', make: '', model: '', description: '' }] }));
+    setForm((current) => ({ ...current, assets: [...current.assets, { itemType: 'Headphone', category: 'Headphone', serialNumber: '', make: '', model: '', description: '' }] }));
   };
 
   const removeAssetRow = (index) => {
@@ -124,7 +124,6 @@ function EmployeeFormPage({ employees, onRefresh }) {
               <div key={asset.id || index} className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900 p-3 md:grid-cols-[1fr_1.2fr_auto]">
                 <input type="hidden" value={asset.itemType} />
                 <select value={asset.category} onChange={(event) => handleAssetChange(index, 'category', event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
-                  <option>IT Asset</option>
                   <option>Others</option>
                   <option>Laptop</option>
                   <option>Headphone</option>

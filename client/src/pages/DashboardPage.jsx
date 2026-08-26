@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 function DashboardPage({ employees, inventory, onRefresh }) {
   const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
+  const fileInputRef = useRef(null);
   const activeCount = employees.filter((employee) => employee.status !== 'Released' && employee.status !== 'Archived').length;
   const historyCount = inventory.itAssets.reduce((sum, asset) => sum + (asset.history?.length || 0), 0);
   const returnedCount = inventory.itAssets.filter((asset) => asset.status === 'Unallocated').length;
@@ -29,6 +32,40 @@ function DashboardPage({ employees, inventory, onRefresh }) {
     }
   };
 
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      setIsImporting(true);
+      setImportMessage('');
+      const response = await fetch('http://localhost:5000/api/import/excel', {
+        method: 'POST',
+        body: formData,
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Import failed.');
+      }
+      setImportMessage(
+        `Imported ${result.processed} row(s): ${result.createdEmployees} employee(s), ${result.createdAssets} asset(s), ${result.createdOthers} other asset(s). ${result.skipped} row(s) skipped.`
+      );
+      onRefresh();
+    } catch (error) {
+      setImportMessage(error.message || 'Unable to import the Excel file.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -40,9 +77,16 @@ function DashboardPage({ employees, inventory, onRefresh }) {
           <button onClick={handleExportExcel} disabled={isExporting} className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-70">
             {isExporting ? 'Preparing export...' : 'Download Excel'}
           </button>
-          <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
+          <button onClick={handleUploadClick} disabled={isImporting} className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-200 disabled:cursor-not-allowed disabled:opacity-70">
+            {isImporting ? 'Importing...' : 'Upload Excel'}
+          </button>
+          <input ref={fileInputRef} type="file" accept=".xlsx" onChange={handleFileSelected} className="hidden" />
         </div>
       </div>
+
+      {importMessage ? (
+        <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">{importMessage}</div>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">

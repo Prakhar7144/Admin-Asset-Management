@@ -127,6 +127,7 @@ tmp/
 temp/
 *.bak
 *.orig
+uploads/
 
 # =========================
 # Misc

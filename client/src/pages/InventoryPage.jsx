@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
+import EmployeeSearchSelect from '../components/EmployeeSearchSelect';
 
-const initialCardForm = { cardNumber: '', employeeName: '', employeeCode: '', status: 'Assigned', returnedAt: '' };
-const initialAssetForm = { itemType: 'Laptop', serialNumber: '', category: 'IT Asset', make: '', model: '', description: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
+const initialCardForm = { cardNumber: '', employeeId: '', employeeName: '', employeeCode: '', status: 'Assigned', returnedAt: '' };
+const initialAssetForm = { itemType: 'Laptop', serialNumber: '', category: 'Laptop', make: '', model: '', description: '', employeeId: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
 
-function InventoryPage({ inventory, onRefresh }) {
+function InventoryPage({ inventory, employees, onRefresh }) {
   const [activeTab, setActiveTab] = useState('itAssets');
   const [selectedItem, setSelectedItem] = useState(null);
   const [cardForm, setCardForm] = useState(initialCardForm);
@@ -14,6 +15,19 @@ function InventoryPage({ inventory, onRefresh }) {
 
   const accessCards = inventory.accessCards || [];
   const itAssets = inventory.itAssets || [];
+  const employeeList = employees || [];
+
+  const handleSelectCardEmployee = (employee) => {
+    setCardForm((current) => employee
+      ? { ...current, employeeId: employee.id, employeeName: employee.empName, employeeCode: employee.empCode }
+      : { ...current, employeeId: '', employeeName: '', employeeCode: '' });
+  };
+
+  const handleSelectAssetEmployee = (employee) => {
+    setAssetForm((current) => employee
+      ? { ...current, employeeId: employee.id, employeeName: employee.empName, employeeCode: employee.empCode }
+      : { ...current, employeeId: '', employeeName: '', employeeCode: '' });
+  };
 
   const filteredAccessCards = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -59,38 +73,6 @@ function InventoryPage({ inventory, onRefresh }) {
 
   const currentLabel = activeTab === 'accessCards' ? 'Access cards' : 'IT assets';
 
-  const handleDeleteCard = async (cardId) => {
-    const confirmed = window.confirm('Delete this access card?');
-    if (!confirmed) return;
-
-    try {
-      const response = await fetch(`http://localhost:5000/api/inventory/access-cards/${cardId}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error('failed');
-      setMessage('Access card deleted.');
-      onRefresh();
-    } catch (error) {
-      setMessage('Unable to delete access card.');
-    }
-  };
-
-  const handleDeleteAsset = async (assetId) => {
-    const confirmed = window.confirm('Delete this IT asset?');
-    if (!confirmed) return;
-
-    try {
-      const response = await fetch(`http://localhost:5000/api/inventory/it-assets/${assetId}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error('failed');
-      setMessage('IT asset deleted.');
-      onRefresh();
-    } catch (error) {
-      setMessage('Unable to delete IT asset.');
-    }
-  };
-
   const handleCardSubmit = async (event) => {
     event.preventDefault();
     try {
@@ -132,7 +114,6 @@ function InventoryPage({ inventory, onRefresh }) {
           <h2 className="text-2xl font-semibold">Inventory</h2>
           <p className="mt-1 text-sm text-slate-400">Switch between access cards and IT assets, then open any row to view the full ownership timeline.</p>
         </div>
-        <button onClick={onRefresh} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200">Refresh</button>
       </div>
 
       <div className="flex flex-wrap gap-2 rounded-full border border-slate-800 bg-slate-900 p-2">
@@ -172,25 +153,37 @@ function InventoryPage({ inventory, onRefresh }) {
         {activeTab === 'accessCards' ? (
           <form onSubmit={handleCardSubmit} className="mb-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-4">
             <input value={cardForm.cardNumber} onChange={(event) => setCardForm({ ...cardForm, cardNumber: event.target.value })} placeholder="Card number" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" required />
-            <input value={cardForm.employeeName} onChange={(event) => setCardForm({ ...cardForm, employeeName: event.target.value })} placeholder="Employee name" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
-            <input value={cardForm.employeeCode} onChange={(event) => setCardForm({ ...cardForm, employeeCode: event.target.value })} placeholder="Employee code" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <div className="md:col-span-2">
+              <EmployeeSearchSelect
+                employees={employeeList}
+                employeeId={cardForm.employeeId}
+                employeeName={cardForm.employeeName}
+                onSelect={handleSelectCardEmployee}
+                placeholder="Search employee by name or code"
+              />
+            </div>
             <button type="submit" className="rounded-lg bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950">Add card</button>
           </form>
         ) : (
           <form ref={assetFormRef} onSubmit={handleAssetSubmit} className="mb-4 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 lg:grid-cols-6">
             <input type="hidden" value={assetForm.itemType} />
             <select value={assetForm.category} onChange={(event) => setAssetForm({ ...assetForm, category: event.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm">
-              <option>IT Asset</option>
-              <option>Others</option>
               <option>Laptop</option>
               <option>Headphone</option>
               <option>Monitor</option>
               <option>Docking Station</option>
               <option>Mouse</option>
               <option>Speaker</option>
+              <option>Others</option>
             </select>
             <input value={assetForm.serialNumber} onChange={(event) => setAssetForm({ ...assetForm, serialNumber: event.target.value })} placeholder="Serial number" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" required />
-            <input value={assetForm.employeeName} onChange={(event) => setAssetForm({ ...assetForm, employeeName: event.target.value })} placeholder="Employee name" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
+            <EmployeeSearchSelect
+              employees={employeeList}
+              employeeId={assetForm.employeeId}
+              employeeName={assetForm.employeeName}
+              onSelect={handleSelectAssetEmployee}
+              placeholder="Search employee by name or code"
+            />
             <input value={assetForm.make} onChange={(event) => setAssetForm({ ...assetForm, make: event.target.value })} placeholder="Make (optional)" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
             <input value={assetForm.model} onChange={(event) => setAssetForm({ ...assetForm, model: event.target.value })} placeholder="Model (optional)" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
             <input value={assetForm.description} onChange={(event) => setAssetForm({ ...assetForm, description: event.target.value })} placeholder="Description (optional)" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" />
@@ -207,7 +200,6 @@ function InventoryPage({ inventory, onRefresh }) {
                     <th className="px-3 py-3">Employee</th>
                     <th className="px-3 py-3">Status</th>
                     <th className="px-3 py-3">Returned on</th>
-                    <th className="px-3 py-3">Action</th>
                   </>
                 ) : (
                   <>
@@ -217,7 +209,6 @@ function InventoryPage({ inventory, onRefresh }) {
                     <th className="px-3 py-3">Current holder</th>
                     <th className="px-3 py-3">Status</th>
                     <th className="px-3 py-3">Journey</th>
-                    <th className="px-3 py-3">Action</th>
                   </>
                 )}
               </tr>
@@ -230,13 +221,10 @@ function InventoryPage({ inventory, onRefresh }) {
                     <td className="px-3 py-3">{card.employeeName || 'Unassigned'}</td>
                     <td className="px-3 py-3">{card.status}</td>
                     <td className="px-3 py-3">{card.returnedAt || '—'}</td>
-                    <td className="px-3 py-3">
-                      <button type="button" onClick={(event) => { event.stopPropagation(); handleDeleteCard(card.id); }} className="text-sm font-semibold text-rose-300">Delete</button>
-                    </td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan="5" className="px-3 py-6 text-center text-sm text-slate-400">No cards match the current search.</td>
+                    <td colSpan="4" className="px-3 py-6 text-center text-sm text-slate-400">No cards match the current search.</td>
                   </tr>
                 )
               ) : (
@@ -248,13 +236,10 @@ function InventoryPage({ inventory, onRefresh }) {
                     <td className="px-3 py-3">{asset.employeeName || 'Unassigned'}</td>
                     <td className="px-3 py-3">{asset.status}</td>
                     <td className="px-3 py-3 max-w-[18rem] text-slate-400">{renderJourney(asset)}</td>
-                    <td className="px-3 py-3">
-                      <button type="button" onClick={(event) => { event.stopPropagation(); handleDeleteAsset(asset.id); }} className="text-sm font-semibold text-rose-300">Delete</button>
-                    </td>
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan="7" className="px-3 py-6 text-center text-sm text-slate-400">No assets match the current search.</td>
+                    <td colSpan="6" className="px-3 py-6 text-center text-sm text-slate-400">No assets match the current search.</td>
                   </tr>
                 )
               )}
