@@ -44,6 +44,7 @@ const HEADER_MAP = [
   { key: 'serialNumber', match: ['serial no / quantity', 'serial no', 'serial number', 'quantity'] },
   { key: 'otherAssets', match: ['other assets', 'other asset', 'other assets (keyboard, mouse, cables, etc)'] },
 ];
+const REQUIRED_HEADERS = ['employeeCode', 'name', 'assetType', 'serialNumber'];
 
 function normalizeHeader(value) {
   return String(value || '')
@@ -63,6 +64,39 @@ function findHeaderKey(value) {
     }
   }
   return null;
+}
+
+function findHeaderRow(sheet) {
+  let bestMatch = null;
+
+  for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    const row = sheet.getRow(rowNumber);
+    const headerMap = new Map();
+
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      const key = findHeaderKey(cell.value);
+      if (key && !headerMap.has(colNumber)) {
+        headerMap.set(colNumber, key);
+      }
+    });
+
+    const detectedHeaders = new Set(headerMap.values());
+    const requiredHeaderCount = REQUIRED_HEADERS.filter((key) => detectedHeaders.has(key)).length;
+    const score = (requiredHeaderCount * 100) + detectedHeaders.size;
+
+    // A partial row (for example, a report title containing "Employee Code")
+    // must not be mistaken for a header. The real import header has all of the
+    // core fields needed to identify an employee and their assigned asset.
+    if (requiredHeaderCount === REQUIRED_HEADERS.length && (!bestMatch || score > bestMatch.score)) {
+      bestMatch = { rowNumber, headerMap, score };
+    }
+  }
+
+  if (!bestMatch) {
+    throw new Error(`Could not find a header row containing all required columns: ${REQUIRED_HEADERS.join(', ')}.`);
+  }
+
+  return bestMatch;
 }
 
 function parseRow(row, headerMap) {
@@ -96,6 +130,29 @@ function buildReturnedHistoryEntry(employee) {
     returnedAt,
     status: 'Returned',
   };
+}
+
+async function unassignAccessCardsForEmployee(employee) {
+  await AccessCard.updateMany({
+    status: 'Assigned',
+    $or: [
+      { employeeId: employee._id },
+      { employeeCode: employee.empCode },
+    ],
+  }, {
+    $set: {
+      employeeId: null,
+      employeeCode: null,
+      employeeName: null,
+      status: 'Unassigned',
+      returnedAt: parseDateSafe(employee.dateOfLeaving),
+    },
+  });
+
+  if (employee.accessCard) {
+    employee.accessCard = '';
+    await employee.save();
+  }
 }
 
 async function findOrCreateEmployee(data, options = {}) {
@@ -138,10 +195,15 @@ async function findOrCreateEmployee(data, options = {}) {
     }
   }
 
+  if (hasLeft) {
+    await unassignAccessCardsForEmployee(employee);
+  }
+
   return employee;
 }
 
-async function createOrUpdateAccessCard(cardNumber, employee) {
+async function createOrUpdateAccessCard(cardNumber, employee, options = {}) {
+  const hasLeft = Boolean(options.hasLeft);
   const normalizedCardNumber = String(cardNumber || '').trim();
   if (!normalizedCardNumber) {
     return null;
@@ -151,17 +213,25 @@ async function createOrUpdateAccessCard(cardNumber, employee) {
   if (!card) {
     card = await AccessCard.create({
       cardNumber: normalizedCardNumber,
-      employeeId: employee._id,
-      employeeCode: employee.empCode,
-      employeeName: employee.empName,
-      status: 'Assigned',
+      employeeId: hasLeft ? null : employee._id,
+      employeeCode: hasLeft ? null : employee.empCode,
+      employeeName: hasLeft ? null : employee.empName,
+      status: hasLeft ? 'Unassigned' : 'Assigned',
       assignedAt: new Date(),
-      returnedAt: null,
+      returnedAt: hasLeft ? parseDateSafe(employee.dateOfLeaving) : null,
     });
     logInfo(`Created access card ${normalizedCardNumber}`);
   } else {
     const update = {};
-    if (!card.employeeId || !card.employeeId.equals(employee._id)) {
+    if (hasLeft) {
+      if (card.employeeId?.equals(employee._id) || card.employeeCode === employee.empCode) {
+        update.employeeId = null;
+        update.employeeCode = null;
+        update.employeeName = null;
+        update.status = 'Unassigned';
+        update.returnedAt = parseDateSafe(employee.dateOfLeaving);
+      }
+    } else if (!card.employeeId || !card.employeeId.equals(employee._id)) {
       update.employeeId = employee._id;
       update.employeeCode = employee.empCode;
       update.employeeName = employee.empName;
@@ -176,7 +246,7 @@ async function createOrUpdateAccessCard(cardNumber, employee) {
     }
   }
 
-  if (employee.accessCard !== normalizedCardNumber) {
+  if (!hasLeft && employee.accessCard !== normalizedCardNumber) {
     employee.accessCard = normalizedCardNumber;
     await employee.save();
   }
@@ -295,17 +365,10 @@ export async function importExcel(filePath) {
     throw new Error('No worksheet found in Excel file.');
   }
 
-  const headerRow = sheet.getRow(1);
-  const headerMap = new Map();
-  headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-    const key = findHeaderKey(cell.value);
-    if (key) {
-      headerMap.set(colNumber, key);
-    }
-  });
+  const { rowNumber: headerRowNumber, headerMap } = findHeaderRow(sheet);
+  logInfo(`Detected row ${headerRowNumber} as the header row.`);
 
-  const requiredHeaders = ['employeeCode', 'name', 'assetType', 'serialNumber'];
-  const missing = requiredHeaders.filter((field) => !Array.from(headerMap.values()).includes(field));
+  const missing = REQUIRED_HEADERS.filter((field) => !Array.from(headerMap.values()).includes(field));
   if (missing.length) {
     logWarn(`Warning: missing required headers: ${missing.join(', ')}`);
   }
@@ -316,7 +379,7 @@ export async function importExcel(filePath) {
   let createdAssets = 0;
   let createdOthers = 0;
 
-  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+  for (let rowNumber = headerRowNumber + 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber);
     const rowData = parseRow(row, headerMap);
     const employeeCode = String(rowData.employeeCode || '').trim();
@@ -350,7 +413,7 @@ export async function importExcel(filePath) {
       }
 
       if (rowData.accessCardNo) {
-        await createOrUpdateAccessCard(rowData.accessCardNo, employee);
+        await createOrUpdateAccessCard(rowData.accessCardNo, employee, { hasLeft });
       }
 
       if (assetType || serialNumber) {

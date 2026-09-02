@@ -4,6 +4,12 @@ import EmployeeSearchSelect from '../components/EmployeeSearchSelect';
 const initialCardForm = { cardNumber: '', employeeId: '', employeeName: '', employeeCode: '', status: 'Assigned', returnedAt: '' };
 const initialAssetForm = { itemType: 'Laptop', serialNumber: '', category: 'Laptop', make: '', model: '', description: '', employeeId: '', employeeName: '', employeeCode: '', status: 'Unallocated' };
 
+function getSerialNumberLabel(asset) {
+  return asset?.category === 'Others' || asset?.itemType === 'Other'
+    ? 'Not applicable'
+    : asset?.serialNumber || 'Not applicable';
+}
+
 function InventoryPage({ inventory, employees, onRefresh }) {
   const [activeTab, setActiveTab] = useState('itAssets');
   const [selectedItem, setSelectedItem] = useState(null);
@@ -231,7 +237,7 @@ function InventoryPage({ inventory, employees, onRefresh }) {
                 filteredItAssets.length ? filteredItAssets.map((asset) => (
                   <tr key={asset.id} className="cursor-pointer border-b border-slate-800/80 align-top hover:bg-slate-800/70" onClick={() => setSelectedItem(asset)}>
                     <td className="px-3 py-3 font-medium text-slate-100">{asset.itemType}</td>
-                    <td className="px-3 py-3">{asset.serialNumber}</td>
+                    <td className="px-3 py-3">{getSerialNumberLabel(asset)}</td>
                     <td className="px-3 py-3">{asset.category || 'IT Asset'}</td>
                     <td className="px-3 py-3">{asset.employeeName || 'Unassigned'}</td>
                     <td className="px-3 py-3">{asset.status}</td>
@@ -254,7 +260,11 @@ function InventoryPage({ inventory, employees, onRefresh }) {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-slate-100">{selectedItem.cardNumber || selectedItem.itemType}</h3>
-                <p className="mt-1 text-sm text-slate-400">{selectedItem.serialNumber ? `Serial: ${selectedItem.serialNumber}` : `Employee: ${selectedItem.employeeName || 'Unassigned'}`}</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  {selectedItem.cardNumber
+                    ? `Employee: ${selectedItem.employeeName || 'Unassigned'}`
+                    : `Serial: ${getSerialNumberLabel(selectedItem)}`}
+                </p>
               </div>
               <button type="button" onClick={() => setSelectedItem(null)} className="rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300">Close</button>
             </div>
