@@ -353,6 +353,66 @@ async function createInventoryAsset(data, employee, options = { other: false, ha
   return item;
 }
 
+function isAccessCardAsset(assetType) {
+  return normalizeHeader(assetType) === 'access card';
+}
+
+async function createUnassignedInventoryAsset(data, options = { other: false }) {
+  const trimmedSerial = String(data.serialNumber || '').trim();
+  const assetType = options.other ? 'Other' : (String(data.assetType || '').trim() || 'Unknown');
+  const serialNumber = options.other
+    ? `OTHER-${crypto.randomUUID()}`
+    : trimmedSerial || `NA-${crypto.randomUUID()}`;
+
+  if (!options.other && trimmedSerial) {
+    const existing = await InventoryItem.findOne({ serialNumber: trimmedSerial });
+    if (existing) {
+      logWarn(`Skipping unassigned asset ${trimmedSerial}: an inventory record with that serial number already exists.`);
+      return null;
+    }
+  }
+
+  const item = await InventoryItem.create({
+    itemType: assetType,
+    serialNumber,
+    category: options.other ? 'Others' : 'IT Asset',
+    make: String(data.make || '').trim() || null,
+    model: String(data.model || '').trim() || null,
+    description: options.other ? String(data.otherAssets || '').trim() || null : null,
+    status: 'Unallocated',
+    employeeId: null,
+    employeeCode: null,
+    employeeName: null,
+    allocatedTo: null,
+    history: [],
+  });
+
+  logInfo(`Created unassigned ${options.other ? 'other asset' : 'asset'} ${item.serialNumber}.`);
+  return item;
+}
+
+async function createUnassignedAccessCard(data) {
+  const cardNumber = String(data.accessCardNo || data.serialNumber || '').trim() || `CARD-${crypto.randomUUID()}`;
+  const existing = await AccessCard.findOne({ cardNumber });
+  if (existing) {
+    logWarn(`Skipping unassigned access card ${cardNumber}: a card with that number already exists.`);
+    return null;
+  }
+
+  const card = await AccessCard.create({
+    cardNumber,
+    employeeId: null,
+    employeeCode: null,
+    employeeName: null,
+    status: 'Unassigned',
+    assignedAt: null,
+    returnedAt: null,
+  });
+
+  logInfo(`Created unassigned access card ${card.cardNumber}.`);
+  return card;
+}
+
 export async function importExcel(filePath) {
   if (!filePath) {
     throw new Error('Excel file path is required. Run: node scripts/importFromExcel.js <file-path>');
@@ -392,19 +452,42 @@ export async function importExcel(filePath) {
       continue;
     }
 
-    if (!employeeCode) {
-      logWarn(`Skipping row ${rowNumber}: missing Employee Code (cannot link the row to any employee).`);
-      skipped += 1;
-      continue;
-    }
-
-    if (!name) {
-      logWarn(`Row ${rowNumber}: Name is missing for employee ${employeeCode}; continuing with the fields that are present.`);
-    }
-
-    const hasLeft = isDateOfLeavingPastOrToday(rowData.dateOfLeaving);
-
     try {
+      if (!employeeCode) {
+        if (isAccessCardAsset(assetType)) {
+          await createUnassignedAccessCard(rowData);
+          processed += 1;
+          continue;
+        }
+
+        if (assetType || serialNumber) {
+          const asset = await createUnassignedInventoryAsset(rowData);
+          if (asset) {
+            createdAssets += 1;
+          }
+          processed += 1;
+          continue;
+        }
+
+        if (otherAssetsText) {
+          const otherAsset = await createUnassignedInventoryAsset(rowData, { other: true });
+          if (otherAsset) {
+            createdOthers += 1;
+          }
+          processed += 1;
+          continue;
+        }
+
+        logWarn(`Skipping row ${rowNumber}: it has no employee or inventory information.`);
+        skipped += 1;
+        continue;
+      }
+
+      if (!name) {
+        logWarn(`Row ${rowNumber}: Name is missing for employee ${employeeCode}; continuing with the fields that are present.`);
+      }
+
+      const hasLeft = isDateOfLeavingPastOrToday(rowData.dateOfLeaving);
       const beforeCount = await Employee.countDocuments({ empCode: employeeCode });
       const employee = await findOrCreateEmployee(rowData, { hasLeft });
       const afterCount = await Employee.countDocuments({ empCode: employeeCode });
