@@ -8,7 +8,7 @@ import { connectToDatabase } from '../config/db.js';
 import { Employee } from '../models/employeeModel.js';
 import { AccessCard } from '../models/accessCardModel.js';
 import { InventoryItem } from '../models/inventoryModel.js';
-import { isDateOfLeavingPastOrToday, parseDateSafe } from '../utils/dateUtils.js';
+import { getEmployeeStatus, isDateOfLeavingPastOrToday, parseDateSafe } from '../utils/dateUtils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_PATH = path.join(__dirname, '..', 'import-excel.log');
@@ -185,8 +185,9 @@ async function findOrCreateEmployee(data, options = {}) {
       employee.dateOfLeaving = data.dateOfLeaving.trim();
       changed = true;
     }
-    if (hasLeft && employee.status !== 'Released') {
-      employee.status = 'Released';
+    const nextStatus = getEmployeeStatus(employee.dateOfLeaving, employee.isArchived);
+    if (employee.status !== nextStatus) {
+      employee.status = nextStatus;
       changed = true;
     }
     if (changed) {

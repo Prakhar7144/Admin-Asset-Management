@@ -1,8 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import cron from 'node-cron';
 import { connectToDatabase } from './config/db.js';
 import assetRoutes from './routes/assetRoutes.js';
+import { processScheduledReleases } from './services/releaseService.js';
 import './models/employeeModel.js';
 import './models/inventoryModel.js';
 
@@ -24,6 +26,18 @@ export { app };
 
 if (process.env.NODE_ENV !== 'test') {
   await connectToDatabase();
+
+  cron.schedule('0 0 * * *', async () => {
+    try {
+      const releasedCount = await processScheduledReleases();
+      console.log(`Scheduled release job processed ${releasedCount} employee(s)`);
+    } catch (error) {
+      console.error('Scheduled release job failed:', error);
+    }
+  }, {
+    timezone: 'UTC',
+  });
+
   app.listen(port, () => {
     console.log(`Server listening on port ${port}`);
   });

@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs';
 import { Employee } from '../models/employeeModel.js';
 import { InventoryItem } from '../models/inventoryModel.js';
 import { AccessCard } from '../models/accessCardModel.js';
-import { isDateOfLeavingPastOrToday, parseDateSafe } from '../utils/dateUtils.js';
+import { getEmployeeStatus, isDateOfLeavingPastOrToday, parseDateSafe } from '../utils/dateUtils.js';
 
 function toObjectId(value) {
   if (!value) return null;
@@ -164,7 +164,7 @@ export async function createEmployee(input) {
     accessCard: input.accessCard || '',
     dateOfLeaving: input.dateOfLeaving || '',
     isArchived: Boolean(input.isArchived),
-    status: input.isArchived ? 'Archived' : (hasLeft ? 'Released' : 'Active'),
+    status: getEmployeeStatus(input.dateOfLeaving, Boolean(input.isArchived)),
   });
 
   const assetIds = [];
@@ -196,8 +196,7 @@ export async function updateEmployee(id, input) {
   employee.accessCard = input.accessCard || '';
   employee.dateOfLeaving = input.dateOfLeaving || '';
   employee.isArchived = Boolean(input.isArchived);
-  const hasLeft = isDateOfLeavingPastOrToday(employee.dateOfLeaving);
-  employee.status = employee.isArchived ? 'Archived' : (hasLeft ? 'Released' : 'Active');
+  employee.status = getEmployeeStatus(employee.dateOfLeaving, employee.isArchived);
 
   if (employee.status === 'Released' || employee.status === 'Archived') {
     await unassignAccessCardsForEmployee(employee);

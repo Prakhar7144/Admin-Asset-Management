@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import ExcelJS from 'exceljs';
+import { getEmployeeStatus } from '../utils/dateUtils.js';
 
 const appStateSchema = new mongoose.Schema({
   employees: { type: [mongoose.Schema.Types.Mixed], default: [] },
@@ -143,9 +144,7 @@ export function syncInventory(data) {
   const persistedItAssets = Array.isArray(data?.itAssets) ? data.itAssets : [];
 
   const normalizedEmployees = employees.map((employee) => {
-    const leavingDate = parseDateInput(employee.dateOfLeaving);
-    const hasPassed = Boolean(leavingDate && leavingDate < today);
-    const status = employee.isArchived ? 'Archived' : hasPassed ? 'Released' : 'Active';
+    const status = getEmployeeStatus(employee.dateOfLeaving, employee.isArchived);
 
     return {
       ...employee,

@@ -34,7 +34,7 @@ const employeeSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Active', 'Released', 'Archived'],
+    enum: ['Active', 'Pending Release', 'Released', 'Archived'],
     default: 'Active',
   },
   assets: [{
@@ -55,6 +55,20 @@ const employeeSchema = new mongoose.Schema({
 employeeSchema.pre('save', function setDefaults(next) {
   if (!this.status) {
     this.status = this.isArchived ? 'Archived' : 'Active';
+  }
+
+  if (this.isArchived) {
+    this.status = 'Archived';
+  } else if (!this.dateOfLeaving || !String(this.dateOfLeaving).trim()) {
+    this.status = 'Active';
+  } else {
+    const leavingDateValue = new Date(this.dateOfLeaving);
+    if (!Number.isNaN(leavingDateValue.getTime())) {
+      const today = new Date();
+      const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const leavingMidnight = new Date(leavingDateValue.getFullYear(), leavingDateValue.getMonth(), leavingDateValue.getDate());
+      this.status = leavingMidnight < todayMidnight ? 'Released' : 'Pending Release';
+    }
   }
   next();
 });
