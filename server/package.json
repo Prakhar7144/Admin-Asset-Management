@@ -9,6 +9,7 @@
     "clear-db": "node ./scripts/clearDb.js",
     "test": "node --test",
     "run-release-job": "node ./scripts/runReleaseJob.js"
+    "run-cron" : "node --test test/dateStatus.test.js"
   },
   "dependencies": {
     "cors": "^2.8.0",

@@ -8,6 +8,7 @@ import {
   listInventoryHandler,
   createEmployeeHandler,
   updateEmployeeHandler,
+  reactivateEmployeeHandler,
   deleteEmployeeHandler,
   createAccessCardHandler,
   deleteAccessCardHandler,
@@ -36,6 +37,7 @@ router.get('/employees', listEmployeesHandler);
 router.get('/inventory', listInventoryHandler);
 router.post('/employees', createEmployeeHandler);
 router.put('/employees/:id', updateEmployeeHandler);
+router.post('/employees/:id/reactivate', reactivateEmployeeHandler);
 router.delete('/employees/:id', deleteEmployeeHandler);
 router.post('/inventory/access-cards', createAccessCardHandler);
 router.delete('/inventory/access-cards/:id', deleteAccessCardHandler);

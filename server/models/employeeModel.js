@@ -42,6 +42,21 @@ const employeeSchema = new mongoose.Schema({
     ref: 'InventoryItem',
     default: [],
   }],
+  releaseSnapshot: {
+    assetIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'InventoryItem',
+    }],
+    accessCard: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    releasedAt: {
+      type: Date,
+      default: null,
+    },
+  },
 }, {
   timestamps: true,
   toJSON: {

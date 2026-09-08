@@ -4,6 +4,7 @@ import {
   listInventory,
   createEmployee,
   updateEmployee,
+  reactivateEmployee,
   deleteEmployee,
   createAccessCard,
   deleteAccessCard,
@@ -58,6 +59,22 @@ export async function updateEmployeeHandler(req, res) {
   }
 
   res.json(updatedEmployee);
+}
+
+export async function reactivateEmployeeHandler(req, res) {
+  const result = await reactivateEmployee(req.params.id);
+
+  if (result.error === 'not_found') {
+    return res.status(404).json({ message: 'Employee not found' });
+  }
+  if (result.error === 'not_released') {
+    return res.status(400).json({ message: 'Only released employees can be reactivated.' });
+  }
+  if (result.error === 'no_snapshot') {
+    return res.status(400).json({ message: 'No release record is available for this employee, so it cannot be reactivated automatically.' });
+  }
+
+  res.json(result);
 }
 
 export async function deleteEmployeeHandler(req, res) {

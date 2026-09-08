@@ -195,14 +195,21 @@ export async function updateEmployee(id, input) {
   employee.empName = input.empName;
   employee.accessCard = input.accessCard || '';
   employee.dateOfLeaving = input.dateOfLeaving || '';
+  const hasLeft = isDateOfLeavingPastOrToday(employee.dateOfLeaving);
   employee.isArchived = Boolean(input.isArchived);
   employee.status = getEmployeeStatus(employee.dateOfLeaving, employee.isArchived);
 
+  const previousAssetIds = (employee.assets || []).map((assetId) => assetId.toString());
+
   if (employee.status === 'Released' || employee.status === 'Archived') {
+    employee.releaseSnapshot = {
+      assetIds: previousAssetIds,
+      accessCard: employee.accessCard || '',
+      releasedAt: parseDateSafe(employee.dateOfLeaving, new Date()),
+    };
     await unassignAccessCardsForEmployee(employee);
   }
 
-  const previousAssetIds = (employee.assets || []).map((assetId) => assetId.toString());
   const nextAssetIds = [];
 
   for (const asset of input.assets || []) {
@@ -265,6 +272,109 @@ export async function updateEmployee(id, input) {
 
   const savedEmployee = await Employee.findById(employee._id).populate('assets').lean();
   return toEmployeeResponse(savedEmployee);
+}
+
+export async function reactivateEmployee(id) {
+  const employee = await Employee.findOne(mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { appId: id });
+  if (!employee) {
+    return { error: 'not_found' };
+  }
+
+  if (employee.status !== 'Released') {
+    return { error: 'not_released' };
+  }
+
+  const snapshot = employee.releaseSnapshot;
+  if (!snapshot || !snapshot.releasedAt) {
+    return { error: 'no_snapshot' };
+  }
+
+  const snapshotAssetIds = Array.isArray(snapshot.assetIds) ? snapshot.assetIds : [];
+  const snapshotAccessCard = snapshot.accessCard || '';
+
+  employee.dateOfLeaving = '';
+  employee.isArchived = false;
+  employee.status = 'Active';
+
+  const restoredAssetIds = [];
+  const skippedAssets = [];
+
+  for (const assetId of snapshotAssetIds) {
+    const item = await InventoryItem.findById(assetId);
+    if (!item) {
+      skippedAssets.push({ id: assetId.toString(), reason: 'missing' });
+      continue;
+    }
+
+    const assignedElsewhere = item.status === 'Assigned'
+      && item.employeeId
+      && item.employeeId.toString() !== employee._id.toString();
+    if (assignedElsewhere) {
+      skippedAssets.push({
+        id: item._id.toString(),
+        serialNumber: item.serialNumber,
+        reason: 'reassigned',
+        employeeName: item.employeeName || null,
+      });
+      continue;
+    }
+
+    item.status = 'Assigned';
+    item.employeeId = employee._id;
+    item.employeeCode = employee.empCode;
+    item.employeeName = employee.empName;
+    item.allocatedTo = employee._id;
+    item.history = Array.isArray(item.history) ? item.history : [];
+    item.history.push(buildHistoryEntry(employee));
+    await item.save();
+    restoredAssetIds.push(item._id);
+  }
+
+  let restoredCard = null;
+  let skippedCard = null;
+
+  if (snapshotAccessCard) {
+    const card = await AccessCard.findOne({ cardNumber: snapshotAccessCard });
+    if (!card) {
+      skippedCard = { cardNumber: snapshotAccessCard, reason: 'missing' };
+    } else {
+      const cardAssignedElsewhere = card.status === 'Assigned'
+        && card.employeeId
+        && card.employeeId.toString() !== employee._id.toString();
+      if (cardAssignedElsewhere) {
+        skippedCard = {
+          cardNumber: card.cardNumber,
+          reason: 'reassigned',
+          employeeName: card.employeeName || null,
+        };
+      } else {
+        card.employeeId = employee._id;
+        card.employeeCode = employee.empCode;
+        card.employeeName = employee.empName;
+        card.status = 'Assigned';
+        card.assignedAt = new Date();
+        card.returnedAt = null;
+        await card.save();
+        employee.accessCard = card.cardNumber;
+        restoredCard = card.cardNumber;
+      }
+    }
+  }
+
+  employee.assets = restoredAssetIds;
+  employee.releaseSnapshot = { assetIds: [], accessCard: '', releasedAt: null };
+  await employee.save();
+
+  const savedEmployee = await Employee.findById(employee._id).populate('assets').lean();
+  return {
+    employee: toEmployeeResponse(savedEmployee),
+    summary: {
+      restoredAssets: restoredAssetIds.length,
+      skippedAssets,
+      restoredCard,
+      skippedCard,
+    },
+  };
 }
 
 export async function deleteEmployee(id) {

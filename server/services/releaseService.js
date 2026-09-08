@@ -33,11 +33,20 @@ export async function processScheduledReleases() {
     }
 
     const releaseDate = parseDateSafe(employee.dateOfLeaving, new Date());
-    employee.status = 'Released';
-    employee.accessCard = '';
-    await employee.save();
 
     const inventoryItems = await InventoryItem.find({ employeeId: employee._id });
+    const snapshotAssetIds = inventoryItems.map((item) => item._id);
+    const snapshotAccessCard = employee.accessCard || '';
+
+    employee.status = 'Released';
+    employee.accessCard = '';
+    employee.releaseSnapshot = {
+      assetIds: snapshotAssetIds,
+      accessCard: snapshotAccessCard,
+      releasedAt: releaseDate,
+    };
+    await employee.save();
+
     for (const item of inventoryItems) {
       item.status = 'Unallocated';
       item.employeeId = null;
