@@ -36,8 +36,8 @@ export function getEmployeeStatus(value, isArchived = false) {
   const today = new Date();
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-  if (leavingDate < todayMidnight) return 'Released';
-  if (leavingDate >= todayMidnight) return 'Pending Release';
-
-  return 'Active';
+  // A future leaving date is only planned offboarding. The scheduled job moves
+  // the employee to Pending Release once that date has arrived.
+  if (leavingDate > todayMidnight) return 'Active';
+  return 'Pending Release';
 }

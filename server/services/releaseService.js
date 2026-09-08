@@ -1,7 +1,7 @@
 import { Employee } from '../models/employeeModel.js';
 import { InventoryItem } from '../models/inventoryModel.js';
 import { AccessCard } from '../models/accessCardModel.js';
-import { getEmployeeStatus, parseDateSafe } from '../utils/dateUtils.js';
+import { parseDateSafe } from '../utils/dateUtils.js';
 
 export function getReleaseCandidates(employees = [], referenceDate = new Date()) {
   const today = new Date(referenceDate);
@@ -12,8 +12,7 @@ export function getReleaseCandidates(employees = [], referenceDate = new Date())
       return false;
     }
 
-    const status = getEmployeeStatus(employee.dateOfLeaving, Boolean(employee.isArchived));
-    if (status !== 'Released') {
+    if (employee.status === 'Released') {
       return false;
     }
 
@@ -28,41 +27,21 @@ export async function processScheduledReleases() {
 
   for (const candidate of releaseCandidates) {
     const employee = await Employee.findById(candidate._id);
-    if (!employee || employee.status === 'Released') {
+    if (!employee || employee.status === 'Released' || employee.isArchived) {
       continue;
     }
 
-    const releaseDate = parseDateSafe(employee.dateOfLeaving, new Date());
-
     const inventoryItems = await InventoryItem.find({ employeeId: employee._id });
-    const snapshotAssetIds = inventoryItems.map((item) => item._id);
-    const snapshotAccessCard = employee.accessCard || '';
 
-    employee.status = 'Released';
-    employee.accessCard = '';
-    employee.releaseSnapshot = {
-      assetIds: snapshotAssetIds,
-      accessCard: snapshotAccessCard,
-      releasedAt: releaseDate,
-    };
-    await employee.save();
-
+    if (employee.status !== 'Pending Release') {
+      employee.status = 'Pending Release';
+      await employee.save();
+    }
     for (const item of inventoryItems) {
-      item.status = 'Unallocated';
-      item.employeeId = null;
-      item.employeeCode = null;
-      item.employeeName = null;
-      item.allocatedTo = null;
-      item.history = Array.isArray(item.history) ? item.history : [];
-      item.history.push({
-        employeeId: employee._id,
-        employeeCode: employee.empCode || '',
-        employeeName: employee.empName || '',
-        assignedAt: releaseDate,
-        returnedAt: releaseDate,
-        status: 'Returned',
-      });
-      await item.save();
+      if (item.status === 'Assigned') {
+        item.status = 'Pending IT NOC';
+        await item.save();
+      }
     }
 
     await AccessCard.updateMany(
@@ -71,11 +50,7 @@ export async function processScheduledReleases() {
       },
       {
         $set: {
-          employeeId: null,
-          employeeCode: null,
-          employeeName: null,
-          status: 'Unassigned',
-          returnedAt: releaseDate,
+          status: 'Pending IT NOC',
         },
       }
     );

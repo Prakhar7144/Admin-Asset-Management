@@ -8,7 +8,7 @@
     "import-excel": "node ./scripts/importFromExcel.js",
     "clear-db": "node ./scripts/clearDb.js",
     "test": "node --test",
-    "run-release-job": "node ./scripts/runReleaseJob.js"
+    "run-release-job": "node ./scripts/runReleaseJob.js",
     "run-cron" : "node --test test/dateStatus.test.js"
   },
   "dependencies": {

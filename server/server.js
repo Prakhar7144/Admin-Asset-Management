@@ -35,7 +35,7 @@ if (process.env.NODE_ENV !== 'test') {
       console.error('Scheduled release job failed:', error);
     }
   }, {
-    timezone: 'UTC',
+    timezone: 'Asia/Kolkata',
   });
 
   app.listen(port, () => {

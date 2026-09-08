@@ -25,7 +25,7 @@ const accessCardSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Assigned', 'Returned', 'Unassigned'],
+    enum: ['Assigned', 'Pending IT NOC', 'Returned', 'Unassigned', 'Damaged', 'Missing'],
     default: 'Unassigned',
   },
   assignedAt: {

@@ -4,6 +4,7 @@ import DashboardPage from './pages/DashboardPage';
 import EmployeesPage from './pages/EmployeesPage';
 import EmployeeFormPage from './pages/EmployeeFormPage';
 import InventoryPage from './pages/InventoryPage';
+import ItNocPage from './pages/ItNocPage';
 
 function App() {
   const [employees, setEmployees] = useState([]);
@@ -56,6 +57,9 @@ function App() {
             <NavLink to="/inventory" className={({ isActive }) => `rounded-full px-4 py-2 text-sm font-medium ${isActive ? 'bg-cyan-500 text-slate-950' : 'bg-slate-900 text-slate-300 hover:bg-slate-800'}`}>
               Inventory
             </NavLink>
+            <NavLink to="/it-noc" className={({ isActive }) => `rounded-full px-4 py-2 text-sm font-medium ${isActive ? 'bg-cyan-500 text-slate-950' : 'bg-slate-900 text-slate-300 hover:bg-slate-800'}`}>
+              IT NOC
+            </NavLink>
           </nav>
         </header>
 
@@ -72,6 +76,7 @@ function App() {
             <Route path="/employees/new" element={<EmployeeFormPage employees={employees} onRefresh={fetchData} />} />
             <Route path="/employees/:employeeId" element={<EmployeeFormPage employees={employees} onRefresh={fetchData} />} />
             <Route path="/inventory" element={<InventoryPage inventory={inventory} employees={employees} onRefresh={fetchData} />} />
+            <Route path="/it-noc" element={<ItNocPage onRefresh={fetchData} />} />
             <Route path="*" element={<div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-center"><h2 className="text-xl font-semibold">Page not found</h2><p className="mt-2 text-sm text-slate-400">Return to the dashboard to continue.</p><Link to="/" className="mt-4 inline-block rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950">Go home</Link></div>} />
           </Routes>
         </main>

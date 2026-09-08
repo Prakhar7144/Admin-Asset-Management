@@ -35,7 +35,7 @@ const inventoryItemSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Assigned', 'Unallocated', 'Returned'],
+    enum: ['Assigned', 'Pending IT NOC', 'Unallocated', 'Returned', 'Damaged', 'Missing'],
     default: 'Unallocated',
   },
   employeeId: {
@@ -64,7 +64,7 @@ const inventoryItemSchema = new mongoose.Schema({
     employeeName: { type: String, default: '' },
     assignedAt: { type: Date, default: Date.now },
     returnedAt: { type: Date, default: null },
-    status: { type: String, enum: ['Assigned', 'Returned'], default: 'Assigned' },
+    status: { type: String, enum: ['Assigned', 'Returned', 'Damaged', 'Missing'], default: 'Assigned' },
   }],
 }, {
   timestamps: true,

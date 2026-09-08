@@ -6,12 +6,13 @@ test('returns only employees whose leaving date is reached', () => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const future = new Date(today.getTime() + 86400000).toISOString().slice(0, 10);
-  const past = new Date(today.getTime() - 86400000).toISOString().slice(0, 10);
-  const todayText = today.toISOString().slice(0, 10);
+  const formatLocalDate = (date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+  const future = formatLocalDate(new Date(today.getTime() + 86400000));
+  const past = formatLocalDate(new Date(today.getTime() - 86400000));
+  const todayText = formatLocalDate(today);
 
   const employees = [
-    { _id: '1', isArchived: false, dateOfLeaving: future, status: 'Pending Release' },
+    { _id: '1', isArchived: false, dateOfLeaving: future, status: 'Active' },
     { _id: '2', isArchived: false, dateOfLeaving: past, status: 'Pending Release' },
     { _id: '3', isArchived: false, dateOfLeaving: todayText, status: 'Pending Release' },
     { _id: '4', isArchived: true, dateOfLeaving: past, status: 'Archived' },

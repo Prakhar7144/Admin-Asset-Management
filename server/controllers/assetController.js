@@ -10,9 +10,12 @@ import {
   deleteAccessCard,
   createItAsset,
   deleteItAsset,
+  listItNoc,
+  completeItNoc,
   exportExcel,
 } from '../services/assetService.js';
 import { importExcel } from '../scripts/importFromExcel.js';
+import { processScheduledReleases } from '../services/releaseService.js';
 
 export async function healthHandler(_req, res) {
   res.json({ status: 'ok' });
@@ -45,6 +48,19 @@ export async function listEmployeesHandler(_req, res) {
 export async function listInventoryHandler(_req, res) {
   const inventory = await listInventory();
   res.json(inventory);
+}
+
+export async function listItNocHandler(_req, res) {
+  await processScheduledReleases();
+  res.json(await listItNoc());
+}
+
+export async function completeItNocHandler(req, res) {
+  const result = await completeItNoc(req.params.employeeId, req.body);
+  if (result.error === 'not_found') return res.status(404).json({ message: 'Employee not found' });
+  if (result.error === 'not_due') return res.status(400).json({ message: 'This employee is not ready for IT NOC yet.' });
+  if (result.error === 'incomplete') return res.status(400).json({ message: 'Choose an outcome for every pending asset and access card.' });
+  res.json(result);
 }
 
 export async function createEmployeeHandler(req, res) {

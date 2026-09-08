@@ -82,7 +82,11 @@ employeeSchema.pre('save', function setDefaults(next) {
       const today = new Date();
       const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const leavingMidnight = new Date(leavingDateValue.getFullYear(), leavingDateValue.getMonth(), leavingDateValue.getDate());
-      this.status = leavingMidnight < todayMidnight ? 'Released' : 'Pending Release';
+      // Do not turn an employee into Released merely because time has passed.
+      // That transition is completed only by the IT NOC workflow.
+      if (this.status !== 'Released') {
+        this.status = leavingMidnight > todayMidnight ? 'Active' : 'Pending Release';
+      }
     }
   }
   next();

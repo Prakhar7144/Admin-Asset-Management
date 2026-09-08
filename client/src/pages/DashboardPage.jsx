@@ -9,6 +9,8 @@ function DashboardPage({ employees, inventory, onRefresh }) {
   const activeCount = employees.filter((employee) => employee.status !== 'Released' && employee.status !== 'Archived').length;
   const historyCount = inventory.itAssets.reduce((sum, asset) => sum + (asset.history?.length || 0), 0);
   const returnedCount = inventory.itAssets.filter((asset) => asset.status === 'Unallocated').length;
+  const nocCount = inventory.itAssets.filter((asset) => asset.status === 'Pending IT NOC').length
+    + inventory.accessCards.filter((card) => card.status === 'Pending IT NOC').length;
 
   const handleExportExcel = async () => {
     try {
@@ -88,7 +90,7 @@ function DashboardPage({ employees, inventory, onRefresh }) {
         <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">{importMessage}</div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-4">
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
           <div className="text-sm text-slate-400">Active employees</div>
           <div className="mt-3 text-4xl font-semibold text-cyan-300">{activeCount}</div>
@@ -101,6 +103,10 @@ function DashboardPage({ employees, inventory, onRefresh }) {
           <div className="text-sm text-slate-400">Asset history entries</div>
           <div className="mt-3 text-4xl font-semibold text-violet-300">{historyCount}</div>
         </div>
+        <Link to="/it-noc" className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 transition hover:bg-amber-500/15">
+          <div className="text-sm text-amber-200">Awaiting IT NOC</div>
+          <div className="mt-3 text-4xl font-semibold text-amber-300">{nocCount}</div>
+        </Link>
       </div>
 
       <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">

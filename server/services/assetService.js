@@ -101,7 +101,6 @@ async function unassignAccessCardsForEmployee(employee) {
 }
 
 async function createInventoryItemFromAsset(asset, employee, options = {}) {
-  const hasLeft = Boolean(options.hasLeft);
   const item = await InventoryItem.create({
     itemType: asset.itemType || 'Laptop',
     serialNumber: asset.serialNumber || crypto.randomUUID(),
@@ -109,12 +108,12 @@ async function createInventoryItemFromAsset(asset, employee, options = {}) {
     make: asset.make || null,
     model: asset.model || null,
     description: asset.description || null,
-    status: hasLeft ? 'Unallocated' : 'Assigned',
-    employeeId: hasLeft ? null : employee._id,
-    employeeCode: hasLeft ? null : employee.empCode,
-    employeeName: hasLeft ? null : employee.empName,
-    allocatedTo: hasLeft ? null : employee._id,
-    history: [hasLeft ? buildReturnedHistoryEntry(employee) : buildHistoryEntry(employee)],
+    status: 'Assigned',
+    employeeId: employee._id,
+    employeeCode: employee.empCode,
+    employeeName: employee.empName,
+    allocatedTo: employee._id,
+    history: [buildHistoryEntry(employee)],
   });
 
   return item;
@@ -126,15 +125,6 @@ export async function listEmployees() {
 }
 
 export async function listInventory() {
-  // Correct cards belonging to employees released before this behavior existed.
-  const releasedEmployees = await Employee.find({ status: { $in: ['Released', 'Archived'] } });
-  for (const employee of releasedEmployees) {
-    await unassignAccessCardsForEmployee(employee);
-    if (employee.isModified('accessCard')) {
-      await employee.save();
-    }
-  }
-
   const items = await InventoryItem.find().lean();
   const cards = await AccessCard.find().lean();
   return {
@@ -154,6 +144,76 @@ export async function listInventory() {
   };
 }
 
+function closeAssetHistory(item, employee, outcome) {
+  item.history = Array.isArray(item.history) ? item.history : [];
+  const lastEntry = item.history[item.history.length - 1];
+  if (lastEntry && !lastEntry.returnedAt) {
+    lastEntry.returnedAt = new Date();
+    lastEntry.status = outcome;
+  } else {
+    item.history.push({ ...buildHistoryEntry(employee), returnedAt: new Date(), status: outcome });
+  }
+}
+
+export async function listItNoc() {
+  const employees = await Employee.find({ status: 'Pending Release', isArchived: false }).lean();
+  const dueEmployees = employees.filter((employee) => isDateOfLeavingPastOrToday(employee.dateOfLeaving));
+  const employeeIds = dueEmployees.map((employee) => employee._id);
+  const [assets, cards] = await Promise.all([
+    InventoryItem.find({ employeeId: { $in: employeeIds }, status: 'Pending IT NOC' }).lean(),
+    AccessCard.find({ employeeId: { $in: employeeIds }, status: 'Pending IT NOC' }).lean(),
+  ]);
+
+  return dueEmployees.map((employee) => ({
+    id: employee._id.toString(),
+    empCode: employee.empCode,
+    empName: employee.empName,
+    dateOfLeaving: employee.dateOfLeaving,
+    assets: assets.filter((asset) => asset.employeeId?.toString() === employee._id.toString()).map(toInventoryResponse),
+    accessCards: cards.filter((card) => card.employeeId?.toString() === employee._id.toString()).map((card) => ({
+      id: card._id.toString(), cardNumber: card.cardNumber, status: card.status,
+    })),
+  })).filter((entry) => entry.assets.length || entry.accessCards.length);
+}
+
+export async function completeItNoc(id, input = {}) {
+  const employee = await Employee.findOne(mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { appId: id });
+  if (!employee) return { error: 'not_found' };
+  if (employee.status !== 'Pending Release' || !isDateOfLeavingPastOrToday(employee.dateOfLeaving)) return { error: 'not_due' };
+
+  const [assets, cards] = await Promise.all([
+    InventoryItem.find({ employeeId: employee._id, status: 'Pending IT NOC' }),
+    AccessCard.find({ employeeId: employee._id, status: 'Pending IT NOC' }),
+  ]);
+  const assetOutcomes = new Map((input.assets || []).map((entry) => [String(entry.id), entry.outcome]));
+  const cardOutcomes = new Map((input.accessCards || []).map((entry) => [String(entry.id), entry.outcome]));
+  const allowed = new Set(['Returned', 'Damaged', 'Missing']);
+  if (assets.some((item) => !allowed.has(assetOutcomes.get(item._id.toString()))) || cards.some((card) => !allowed.has(cardOutcomes.get(card._id.toString()))) || assetOutcomes.size !== assets.length || cardOutcomes.size !== cards.length) {
+    return { error: 'incomplete' };
+  }
+
+  const snapshotAssetIds = assets.map((item) => item._id);
+  const snapshotAccessCard = employee.accessCard || cards[0]?.cardNumber || '';
+  for (const item of assets) {
+    const outcome = assetOutcomes.get(item._id.toString());
+    item.status = outcome === 'Returned' ? 'Unallocated' : outcome;
+    closeAssetHistory(item, employee, outcome);
+    item.employeeId = null; item.employeeCode = null; item.employeeName = null; item.allocatedTo = null;
+    await item.save();
+  }
+  for (const card of cards) {
+    const outcome = cardOutcomes.get(card._id.toString());
+    card.status = outcome === 'Returned' ? 'Unassigned' : outcome;
+    card.employeeId = null; card.employeeCode = null; card.employeeName = null; card.returnedAt = new Date();
+    await card.save();
+  }
+  employee.status = 'Released';
+  employee.accessCard = '';
+  employee.releaseSnapshot = { assetIds: snapshotAssetIds, accessCard: snapshotAccessCard, releasedAt: new Date() };
+  await employee.save();
+  return { success: true, releasedEmployeeId: employee._id.toString() };
+}
+
 export async function createEmployee(input) {
   const hasLeft = isDateOfLeavingPastOrToday(input.dateOfLeaving);
 
@@ -170,15 +230,12 @@ export async function createEmployee(input) {
   const assetIds = [];
   for (const asset of input.assets || []) {
     const createdItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
-    if (!hasLeft) {
+    if (employee.status !== 'Released') {
       assetIds.push(createdItem._id);
     }
   }
 
   employee.assets = assetIds;
-  if (employee.status === 'Released' || employee.status === 'Archived') {
-    await unassignAccessCardsForEmployee(employee);
-  }
   await employee.save();
 
   const savedEmployee = await Employee.findById(employee._id).populate('assets').lean();
@@ -201,15 +258,6 @@ export async function updateEmployee(id, input) {
 
   const previousAssetIds = (employee.assets || []).map((assetId) => assetId.toString());
 
-  if (employee.status === 'Released' || employee.status === 'Archived') {
-    employee.releaseSnapshot = {
-      assetIds: previousAssetIds,
-      accessCard: employee.accessCard || '',
-      releasedAt: parseDateSafe(employee.dateOfLeaving, new Date()),
-    };
-    await unassignAccessCardsForEmployee(employee);
-  }
-
   const nextAssetIds = [];
 
   for (const asset of input.assets || []) {
@@ -218,7 +266,7 @@ export async function updateEmployee(id, input) {
 
     if (!inventoryItem) {
       inventoryItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
-    } else if (!hasLeft) {
+    } else if (employee.status !== 'Released') {
       inventoryItem.itemType = asset.itemType || inventoryItem.itemType;
       inventoryItem.serialNumber = asset.serialNumber || inventoryItem.serialNumber;
       inventoryItem.category = asset.category || inventoryItem.category || 'IT Asset';
@@ -239,7 +287,7 @@ export async function updateEmployee(id, input) {
     // excluded from nextAssetIds below, so the removedAssetIds cleanup unassigns it and
     // closes its history with a Returned entry dated to the employee's leaving date.
 
-    if (!hasLeft) {
+    if (employee.status !== 'Released') {
       nextAssetIds.push(inventoryItem._id);
     }
   }

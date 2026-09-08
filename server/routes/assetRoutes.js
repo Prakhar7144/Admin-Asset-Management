@@ -14,6 +14,8 @@ import {
   deleteAccessCardHandler,
   createItAssetHandler,
   deleteItAssetHandler,
+  listItNocHandler,
+  completeItNocHandler,
 } from '../controllers/assetController.js';
 
 const router = express.Router();
@@ -35,6 +37,8 @@ router.get('/export/excel', exportExcelHandler);
 router.post('/import/excel', upload.single('file'), importExcelHandler);
 router.get('/employees', listEmployeesHandler);
 router.get('/inventory', listInventoryHandler);
+router.get('/it-noc', listItNocHandler);
+router.post('/it-noc/:employeeId/complete', completeItNocHandler);
 router.post('/employees', createEmployeeHandler);
 router.put('/employees/:id', updateEmployeeHandler);
 router.post('/employees/:id/reactivate', reactivateEmployeeHandler);
