@@ -70,7 +70,10 @@ function EmployeeFormPage({ employees, onRefresh }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      if (!response.ok) throw new Error('Failed to save');
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || 'Failed to save');
+      }
       setMessage(employeeId ? 'Employee updated successfully.' : 'Employee created successfully.');
       onRefresh();
       if (!employeeId) {
@@ -78,7 +81,7 @@ function EmployeeFormPage({ employees, onRefresh }) {
       }
       navigate('/employees');
     } catch (error) {
-      setMessage('Unable to save the employee record.');
+      setMessage(error.message || 'Unable to save the employee record.');
     }
   };
 

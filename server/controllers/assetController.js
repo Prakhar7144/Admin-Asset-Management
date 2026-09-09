@@ -9,6 +9,7 @@ import {
   createAccessCard,
   deleteAccessCard,
   createItAsset,
+  markItAssetRepaired,
   deleteItAsset,
   listItNoc,
   completeItNoc,
@@ -64,17 +65,25 @@ export async function completeItNocHandler(req, res) {
 }
 
 export async function createEmployeeHandler(req, res) {
-  const employee = await createEmployee(req.body);
-  res.status(201).json(employee);
+  try {
+    const employee = await createEmployee(req.body);
+    res.status(201).json(employee);
+  } catch (error) {
+    res.status(error.status || 400).json({ message: error.message || 'Unable to create employee.' });
+  }
 }
 
 export async function updateEmployeeHandler(req, res) {
-  const updatedEmployee = await updateEmployee(req.params.id, req.body);
-  if (!updatedEmployee) {
-    return res.status(404).json({ message: 'Employee not found' });
-  }
+  try {
+    const updatedEmployee = await updateEmployee(req.params.id, req.body);
+    if (!updatedEmployee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
 
-  res.json(updatedEmployee);
+    res.json(updatedEmployee);
+  } catch (error) {
+    res.status(error.status || 400).json({ message: error.message || 'Unable to update employee.' });
+  }
 }
 
 export async function reactivateEmployeeHandler(req, res) {
@@ -103,8 +112,12 @@ export async function deleteEmployeeHandler(req, res) {
 }
 
 export async function createAccessCardHandler(req, res) {
-  const card = await createAccessCard(req.body);
-  res.status(201).json(card);
+  try {
+    const card = await createAccessCard(req.body);
+    res.status(201).json(card);
+  } catch (error) {
+    res.status(error.status || 400).json({ message: error.message || 'Unable to add access card.' });
+  }
 }
 
 export async function deleteAccessCardHandler(req, res) {
@@ -117,8 +130,12 @@ export async function deleteAccessCardHandler(req, res) {
 }
 
 export async function createItAssetHandler(req, res) {
-  const item = await createItAsset(req.body);
-  res.status(201).json(item);
+  try {
+    const item = await createItAsset(req.body);
+    res.status(201).json(item);
+  } catch (error) {
+    res.status(error.status || 400).json({ message: error.message || 'Unable to add IT asset.' });
+  }
 }
 
 export async function deleteItAssetHandler(req, res) {
@@ -128,4 +145,16 @@ export async function deleteItAssetHandler(req, res) {
   }
 
   res.json({ success: true, deleted: true });
+}
+
+export async function markItAssetRepairedHandler(req, res) {
+  const result = await markItAssetRepaired(req.params.id);
+  if (result.error === 'not_found') {
+    return res.status(404).json({ message: 'Asset not found' });
+  }
+  if (result.error === 'not_damaged') {
+    return res.status(400).json({ message: 'Only damaged assets can be marked as repaired.' });
+  }
+
+  res.json(result);
 }

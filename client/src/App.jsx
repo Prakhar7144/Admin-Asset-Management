@@ -39,8 +39,9 @@ function App() {
         <header className="border-b border-slate-800 bg-slate-900/70 backdrop-blur">
           <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-400">Employee Asset Portal</p>
-              <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">Track staff, assigned devices, and returned inventory</h1>
+              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-400">IT ASSET INVENTORY</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-400">MITL / MNT / F01</p>
+              <h1 className="mt-2 text-3xl font-semibold sm:text-3xl">Track staff, assigned devices and returned inventory</h1>
             </div>
             <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
               Past employees stay visible, and each asset keeps a recorded ownership history.

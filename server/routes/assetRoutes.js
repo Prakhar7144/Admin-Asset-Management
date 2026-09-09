@@ -13,6 +13,7 @@ import {
   createAccessCardHandler,
   deleteAccessCardHandler,
   createItAssetHandler,
+  markItAssetRepairedHandler,
   deleteItAssetHandler,
   listItNocHandler,
   completeItNocHandler,
@@ -46,6 +47,7 @@ router.delete('/employees/:id', deleteEmployeeHandler);
 router.post('/inventory/access-cards', createAccessCardHandler);
 router.delete('/inventory/access-cards/:id', deleteAccessCardHandler);
 router.post('/inventory/it-assets', createItAssetHandler);
+router.patch('/inventory/it-assets/:id/repair', markItAssetRepairedHandler);
 router.delete('/inventory/it-assets/:id', deleteItAssetHandler);
 
 export default router;

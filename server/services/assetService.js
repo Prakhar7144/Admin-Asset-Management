@@ -10,6 +10,29 @@ function toObjectId(value) {
   return mongoose.Types.ObjectId.isValid(value) ? new mongoose.Types.ObjectId(value) : null;
 }
 
+function exactCaseInsensitive(value) {
+  return {
+    $regex: `^${String(value).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+    $options: 'i',
+  };
+}
+
+async function findInventoryBySerial(serialNumber) {
+  const value = String(serialNumber || '').trim();
+  return value ? InventoryItem.findOne({ serialNumber: exactCaseInsensitive(value) }) : null;
+}
+
+async function findAccessCardByNumber(cardNumber) {
+  const value = String(cardNumber || '').trim();
+  return value ? AccessCard.findOne({ cardNumber: exactCaseInsensitive(value) }) : null;
+}
+
+function conflict(message) {
+  const error = new Error(message);
+  error.status = 409;
+  return error;
+}
+
 function toInventoryResponse(item) {
   return {
     id: item._id?.toString?.() || item.id,
@@ -217,25 +240,77 @@ export async function completeItNoc(id, input = {}) {
 export async function createEmployee(input) {
   const hasLeft = isDateOfLeavingPastOrToday(input.dateOfLeaving);
 
+  // Resolve all supplied inventory identifiers before creating anything. This makes
+  // serial/card matching case-insensitive and prevents a partial employee record
+  // when an item is already allocated to somebody else.
+  const suppliedAssets = input.assets || [];
+  const assetMatches = await Promise.all(suppliedAssets.map((asset) => findInventoryBySerial(asset.serialNumber)));
+  const claimedAssetIds = new Set();
+  for (const item of assetMatches) {
+    if (!item) continue;
+    if (claimedAssetIds.has(item._id.toString())) {
+      throw conflict(`Asset ${item.serialNumber} was selected more than once.`);
+    }
+    claimedAssetIds.add(item._id.toString());
+    if (item.status !== 'Unallocated') {
+      throw conflict(`Asset ${item.serialNumber} is not available for allocation.`);
+    }
+  }
+
+  const requestedCard = String(input.accessCard || '').trim();
+  const existingCard = await findAccessCardByNumber(requestedCard);
+  if (existingCard && existingCard.status !== 'Unassigned') {
+    throw conflict(`Access card ${existingCard.cardNumber} is not available for allocation.`);
+  }
+
   const employee = await Employee.create({
     appId: input.appId || input.id || crypto.randomUUID(),
     empCode: input.empCode,
     empName: input.empName,
-    accessCard: input.accessCard || '',
+    accessCard: '',
     dateOfLeaving: input.dateOfLeaving || '',
     isArchived: Boolean(input.isArchived),
     status: getEmployeeStatus(input.dateOfLeaving, Boolean(input.isArchived)),
   });
 
   const assetIds = [];
-  for (const asset of input.assets || []) {
-    const createdItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
+  for (let index = 0; index < suppliedAssets.length; index += 1) {
+    const asset = suppliedAssets[index];
+    let createdItem = assetMatches[index];
+    if (createdItem) {
+      createdItem.status = 'Assigned';
+      createdItem.employeeId = employee._id;
+      createdItem.employeeCode = employee.empCode;
+      createdItem.employeeName = employee.empName;
+      createdItem.allocatedTo = employee._id;
+      createdItem.history = Array.isArray(createdItem.history) ? createdItem.history : [];
+      createdItem.history.push(buildHistoryEntry(employee));
+      await createdItem.save();
+    } else {
+      createdItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
+    }
     if (employee.status !== 'Released') {
       assetIds.push(createdItem._id);
     }
   }
 
   employee.assets = assetIds;
+  if (requestedCard) {
+    const card = existingCard || await AccessCard.create({
+      cardNumber: requestedCard,
+      status: 'Unassigned',
+    });
+    if (employee.status !== 'Released') {
+      card.employeeId = employee._id;
+      card.employeeCode = employee.empCode;
+      card.employeeName = employee.empName;
+      card.status = 'Assigned';
+      card.assignedAt = new Date();
+      card.returnedAt = null;
+      await card.save();
+      employee.accessCard = card.cardNumber;
+    }
+  }
   await employee.save();
 
   const savedEmployee = await Employee.findById(employee._id).populate('assets').lean();
@@ -262,11 +337,23 @@ export async function updateEmployee(id, input) {
 
   for (const asset of input.assets || []) {
     const existingAssetId = asset.id && mongoose.Types.ObjectId.isValid(asset.id) ? asset.id : null;
-    let inventoryItem = existingAssetId ? await InventoryItem.findById(existingAssetId) : null;
+    // An asset typed into the employee form does not have an id yet. Look up its
+    // serial number as well so an unallocated inventory item is claimed rather
+    // than creating a second record.
+    let inventoryItem = existingAssetId
+      ? await InventoryItem.findById(existingAssetId)
+      : await findInventoryBySerial(asset.serialNumber);
 
     if (!inventoryItem) {
       inventoryItem = await createInventoryItemFromAsset(asset, employee, { hasLeft });
     } else if (employee.status !== 'Released') {
+      const isAlreadyAssignedToEmployee = inventoryItem.employeeId
+        && inventoryItem.employeeId.toString() === employee._id.toString();
+      if (!isAlreadyAssignedToEmployee && inventoryItem.status !== 'Unallocated') {
+        throw conflict(`Asset ${inventoryItem.serialNumber} is not available for allocation.`);
+      }
+
+      const isNewAssignment = !isAlreadyAssignedToEmployee;
       inventoryItem.itemType = asset.itemType || inventoryItem.itemType;
       inventoryItem.serialNumber = asset.serialNumber || inventoryItem.serialNumber;
       inventoryItem.category = asset.category || inventoryItem.category || 'IT Asset';
@@ -278,7 +365,10 @@ export async function updateEmployee(id, input) {
       inventoryItem.employeeCode = employee.empCode;
       inventoryItem.employeeName = employee.empName;
       inventoryItem.allocatedTo = employee._id;
-      if (!inventoryItem.history || !inventoryItem.history.length) {
+      if (isNewAssignment) {
+        inventoryItem.history = Array.isArray(inventoryItem.history) ? inventoryItem.history : [];
+        inventoryItem.history.push(buildHistoryEntry(employee));
+      } else if (!inventoryItem.history || !inventoryItem.history.length) {
         inventoryItem.history = [buildHistoryEntry(employee)];
       }
       await inventoryItem.save();
@@ -441,8 +531,13 @@ export async function createAccessCard(input) {
   const employee = employeeObjectId ? await Employee.findById(employeeObjectId) : null;
   const employeeHasLeft = employee && ['Released', 'Archived'].includes(employee.status);
 
+  const cardNumber = String(input.cardNumber || input.serialNumber || crypto.randomUUID()).trim();
+  if (await findAccessCardByNumber(cardNumber)) {
+    throw conflict(`Access card ${cardNumber} already exists.`);
+  }
+
   const card = await AccessCard.create({
-    cardNumber: input.cardNumber || input.serialNumber || crypto.randomUUID(),
+    cardNumber,
     employeeId: employee && !employeeHasLeft ? employee._id : null,
     employeeCode: employee && !employeeHasLeft ? employee.empCode : null,
     employeeName: employee && !employeeHasLeft ? employee.empName : null,
@@ -488,9 +583,14 @@ export async function createItAsset(input) {
   const employeeObjectId = input.employeeId ? toObjectId(input.employeeId) : null;
   const employee = employeeObjectId ? await Employee.findById(employeeObjectId) : null;
 
+  const serialNumber = String(input.serialNumber || crypto.randomUUID()).trim();
+  if (await findInventoryBySerial(serialNumber)) {
+    throw conflict(`Asset serial number ${serialNumber} already exists.`);
+  }
+
   const item = await InventoryItem.create({
     itemType: input.itemType,
-    serialNumber: input.serialNumber || crypto.randomUUID(),
+    serialNumber,
     category: input.category || 'IT Asset',
     make: input.make || null,
     model: input.model || null,
@@ -510,6 +610,25 @@ export async function createItAsset(input) {
   }
 
   return toInventoryResponse(item.toObject());
+}
+
+export async function markItAssetRepaired(id) {
+  const item = await InventoryItem.findById(id);
+  if (!item) {
+    return { error: 'not_found' };
+  }
+  if (item.status !== 'Damaged') {
+    return { error: 'not_damaged' };
+  }
+
+  item.status = 'Unallocated';
+  item.employeeId = null;
+  item.employeeCode = null;
+  item.employeeName = null;
+  item.allocatedTo = null;
+  await item.save();
+
+  return { success: true, item: toInventoryResponse(item.toObject()) };
 }
 
 export async function deleteItAsset(id) {

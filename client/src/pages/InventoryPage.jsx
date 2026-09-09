@@ -87,12 +87,15 @@ function InventoryPage({ inventory, employees, onRefresh }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cardForm),
       });
-      if (!response.ok) throw new Error('failed');
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || 'Unable to add access card.');
+      }
       setCardForm(initialCardForm);
       setMessage('Access card added.');
       onRefresh();
     } catch (error) {
-      setMessage('Unable to add access card.');
+      setMessage(error.message || 'Unable to add access card.');
     }
   };
 
@@ -104,12 +107,30 @@ function InventoryPage({ inventory, employees, onRefresh }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(assetForm),
       });
-      if (!response.ok) throw new Error('failed');
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || 'Unable to add IT asset.');
+      }
       setAssetForm(initialAssetForm);
       setMessage('IT asset added.');
       onRefresh();
     } catch (error) {
-      setMessage('Unable to add IT asset.');
+      setMessage(error.message || 'Unable to add IT asset.');
+    }
+  };
+
+  const handleMarkRepaired = async (asset) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/inventory/it-assets/${asset.id}/repair`, {
+        method: 'PATCH',
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || 'Unable to mark asset as repaired.');
+      setSelectedItem(null);
+      setMessage('Asset repaired and available for allocation.');
+      await onRefresh();
+    } catch (error) {
+      setMessage(error.message || 'Unable to mark asset as repaired.');
     }
   };
 
@@ -268,6 +289,12 @@ function InventoryPage({ inventory, employees, onRefresh }) {
               </div>
               <button type="button" onClick={() => setSelectedItem(null)} className="rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300">Close</button>
             </div>
+
+            {!selectedItem.cardNumber && selectedItem.status === 'Damaged' ? (
+              <button type="button" onClick={() => handleMarkRepaired(selectedItem)} className="mt-4 rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-slate-950">
+                Mark repaired and make available
+              </button>
+            ) : null}
 
             <div className="mt-6 space-y-3">
               {renderTimeline(selectedItem).length ? (
